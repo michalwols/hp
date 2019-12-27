@@ -1,4 +1,12 @@
-# hp - Hyperparameter Management Library
+# hp: Hyperparameter Management Library
+
+Defining, tuning and tracking hyperparameters in machine learning experiments can get messy. hp uses python classes to declaratively define your hyperparameters. 
+
+## Benefits
+
+1. Type annotated container for your parameters
+2. Automatically generated command line interface 
+3. Handles saving and loading of parameters
 
 
 ## Install
