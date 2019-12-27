@@ -1,35 +1,3 @@
-"""
-
-
-# TODO:
-- add a way to bind params to a function
-  # inspired by https://github.com/google/gin-config
-  p = Params()
-
-  @p.bind(('batch_size'), prefix=True)
-  def train(batch_size: int = 32):
-    pass
-
-  @p.bind({'batch_size': 'bs'}, prefix='train')
-  def train(batch_size):
-    pass
-
-  @p.bind('smooth')
-  def loss(x, y, smooth=.2):
-    pass
-
-  p.from_command()
-  train()
-
-- add __instance_fields__, __fields__ is a class attribute
-
-
-- Params.sample()
-- Params.sampler() # sample without replacement
-- Params.grid()
-
-"""
-
 from abc import ABCMeta
 from collections import OrderedDict
 from copy import deepcopy
@@ -37,7 +5,9 @@ from .parser import get_arg_parser
 
 
 class Field:
-  def __init__(self, help=None, type=None, required=False, default=None):
+  def __init__(
+    self, help=None, type=None, required=False, default=None
+  ):
     self.help = help
     self.type = type
     self.required = required
@@ -83,7 +53,9 @@ class HyperParamsBase:
       if k in self.__fields__:
         setattr(self, k, v)
       else:
-        raise ValueError(f'Unknown parameter: {k}, should be one of {", ".join(self.__fields__)}')
+        raise ValueError(
+          f'Unknown parameter: {k}, should be one of {", ".join(self.__fields__)}'
+        )
 
   def validate(self):
     for k, f in self.__fields__.items():
@@ -95,14 +67,15 @@ class HyperParamsBase:
   @classmethod
   def arg_parser(cls, **kwargs):
     return get_arg_parser(
-      cls.__fields__,
-      description=cls.__doc__,
-      **kwargs)
+      cls.__fields__, description=cls.__doc__, **kwargs
+    )
 
   @classmethod
   def from_command(cls, cmd=None, validate=False, **kwargs):
     parser = cls.arg_parser(**kwargs)
-    parsed = parser.parse_args(cmd.split() if isinstance(cmd, str) else cmd)
+    parsed = parser.parse_args(
+      cmd.split() if isinstance(cmd, str) else cmd
+    )
     params = cls(**vars(parsed))
 
     if validate:
@@ -143,6 +116,15 @@ class HyperParamsBase:
   def on_change(self, callback):
     self._change_callbacks.append(callback)
 
+
+  def bind(self, x):
+
+    def decorated(*args, **kwargs):
+
+
+
+    return decorated
+
   def __setattr__(self, k, v):
     if k in self.__fields__:
       for c in self._change_callbacks:
@@ -169,9 +151,9 @@ class HyperParamsBase:
 
   def __str__(self):
     return (
-        f'{self.__class__.__name__}(\n' +
-        ',\n'.join('  {}={}'.format(k, v) for k, v in self.items()) +
-        '\n)'
+      f'{self.__class__.__name__}(\n' +
+      ',\n'.join('  {}={}'.format(k, v) for k, v in self.items()) +
+      '\n)'
     )
 
   def __len__(self):
@@ -195,8 +177,13 @@ class HyperParamsBase:
       scope[k.upper() if uppercase else k] = v
 
   @classmethod
-  def collect(cls, scope=None, types=(int, str, float, bool),
-              upper_only=True, lowercase=True):
+  def collect(
+    cls,
+    scope=None,
+    types=(int, str, float, bool),
+    upper_only=True,
+    lowercase=True
+  ):
     scope = globals() if scope is None else scope
 
     d = {}
@@ -219,19 +206,21 @@ class MetaHyperParams(ABCMeta):
     fields = OrderedDict()
 
     for base in reversed(bases):
-      if issubclass(base, HyperParamsBase) and base != HyperParamsBase:
+      if issubclass(
+        base, HyperParamsBase
+      ) and base != HyperParamsBase:
         fields.update(deepcopy(base.__fields__))
 
     existing_attributes = set(dir(HyperParamsBase)) | set(fields)
 
     new_attributes = {
-      k: v for (k, v) in namespace.items()
-      if k not in existing_attributes
-         and not k.startswith('_')
-         # and not isinstance(v, type)
+      k: v
+      for (k, v) in namespace.items()
+      if k not in existing_attributes and not k.startswith('_')
     }
 
-    for name, annotation in namespace.get('__annotations__', {}).items():
+    for name, annotation in namespace.get('__annotations__',
+                                          {}).items():
       if name in existing_attributes:
         continue
       if isinstance(annotation, Field):
@@ -245,10 +234,12 @@ class MetaHyperParams(ABCMeta):
       else:
         fields[name] = Field(default=value, type=type(value))
 
-    return super().__new__(metaclass, class_name, bases, {
-      '__fields__': fields,
-      **namespace,
-    })
+    return super().__new__(
+      metaclass, class_name, bases, {
+        '__fields__': fields,
+        **namespace,
+      }
+    )
 
 
 class HyperParams(HyperParamsBase, metaclass=MetaHyperParams):
