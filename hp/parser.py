@@ -1,3 +1,6 @@
+import re
+
+
 def camel_to_snake(text):
   s1 = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', text)
   return re.sub('([a-z0-9])([A-Z])', r'\1_\2', s1).lower()
@@ -9,7 +12,7 @@ def abbreviate(text):
 
 def get_arg_parser(x, description=None, epilog=None, parser=None, **kwargs):
   import argparse
-  from ..params import Field
+  from .params import Field
   parser = parser or argparse.ArgumentParser(description=description, epilog=epilog, **kwargs)
   for k, v in x.items():
     if isinstance(v, dict):

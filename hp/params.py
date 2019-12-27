@@ -93,8 +93,15 @@ class HyperParamsBase:
         raise Exception(f"{k} failed validation. {e}")
 
   @classmethod
+  def arg_parser(cls, **kwargs):
+    return get_arg_parser(
+      cls.__fields__,
+      description=cls.__doc__,
+      **kwargs)
+
+  @classmethod
   def from_command(cls, cmd=None, validate=False, **kwargs):
-    parser = get_arg_parser(cls.__fields__, **kwargs)
+    parser = cls.arg_parser(**kwargs)
     parsed = parser.parse_args(cmd.split() if isinstance(cmd, str) else cmd)
     params = cls(**vars(parsed))
 
@@ -110,21 +117,28 @@ class HyperParamsBase:
   @classmethod
   def load(cls, path):
 
-    if path.endswith(('yaml', 'yml')):
+    if path.endswith(('.yaml', '.yml')):
       import yaml
       with open(path, 'r') as f:
         data = yaml.safe_load(f)
         return cls(**data)
-    elif path.endswith('json'):
+    elif path.endswith('.json'):
       import json
-      data = json.load(path)
-      return cls(**data)
+      with open(path, 'r') as f:
+        data = json.load(f)
+        return cls(**data)
 
   def save(self, path):
-    from .data.io import save_json
-    save_json(dict(self), path)
-
-
+    import pathlib
+    if isinstance(path, (str, pathlib.Path)):
+      if path.endswith(('.yaml', 'yml')):
+        import yaml
+        with open(path, 'w') as f:
+          yaml.dump(dict(self), f)
+      if path.endswith('.json'):
+        import json
+        with open(path, 'w') as f:
+          json.dump(dict(self), f)
 
   def on_change(self, callback):
     self._change_callbacks.append(callback)
@@ -214,11 +228,11 @@ class MetaHyperParams(ABCMeta):
       k: v for (k, v) in namespace.items()
       if k not in existing_attributes
          and not k.startswith('_')
-         and not callable(v)
+         # and not isinstance(v, type)
     }
 
     for name, annotation in namespace.get('__annotations__', {}).items():
-      if name not in new_attributes:
+      if name in existing_attributes:
         continue
       if isinstance(annotation, Field):
         fields[name] = annotation
