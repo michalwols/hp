@@ -56,10 +56,7 @@ params = Params.load('params.yaml')
 ```
 
 
-### Function Binding
-
-Decorate functions to track their arguments.
-Allow overriding default values given current parameters
+### Binding
 
 ```python
 
@@ -73,6 +70,15 @@ def train(epochs=10):
 train()  # use current param value (default to function default)
 
 train(epochs=4)  # override params
+```
+
+
+```python
+trainer.batch_size = params.bind('batch_size')
+```
+
+```python
+params.bind(Optimizer, fields={'lr': 'learning_rate'})
 ```
 
 ### Grid / Random Search
