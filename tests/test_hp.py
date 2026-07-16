@@ -128,3 +128,15 @@ def test_freeze_and_hash():
   else:
     raise AssertionError('frozen HP should reject updates')
   assert p.stable_hash() == before
+
+
+def test_mapping_contains():
+  p = Params()
+  assert 'seed' in p
+  assert 'missing_key' not in p
+  try:
+    p['missing_key']
+  except KeyError:
+    pass
+  else:
+    raise AssertionError('unknown key should raise KeyError')

@@ -260,7 +260,10 @@ class HP(MutableMapping[str, Any], metaclass=HPMeta):
 
   def __getitem__(self, key: str) -> Any:
     node, name = self._path(key)
-    return getattr(node, name)
+    try:
+      return getattr(node, name)
+    except AttributeError:
+      raise KeyError(key) from None
 
   def __setitem__(self, key: str, value: Any) -> None:
     node, name = self._path(key, create=True)
