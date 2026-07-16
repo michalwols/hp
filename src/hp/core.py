@@ -504,10 +504,15 @@ class HP(MutableMapping[str, Any], metaclass=HPMeta):
     return hp
 
   @classmethod
-  def from_cli(cls, args: list[str] | None = None) -> 'HP':
+  def from_command(cls, args: str | list[str] | None = None) -> 'HP':
     from .cli import parse
+    if isinstance(args, str):
+      import shlex
+      args = shlex.split(args)
     hp = cls()
     return parse(hp, args)
+
+  from_cli = from_command
 
   @classmethod
   def load(cls, path: str | Path) -> 'HP':

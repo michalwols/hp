@@ -15,7 +15,7 @@ class TrainHP(HP):
   seed: int = 42
   optimizer: AdamWHP = AdamWHP()
 
-p = TrainHP.from_cli()
+p = TrainHP.from_command()
 p.freeze()
 ```
 
