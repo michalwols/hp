@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hp"
+version = "0.1.0"
+description = "Small Python-native configuration, callable binding, and hyperparameter search"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [{name = "Michal Wolski"}]
+dependencies = []
+
+[project.optional-dependencies]
+yaml = ["pyyaml>=6"]
+optuna = ["optuna>=4"]
+dev = ["pytest>=8", "ruff>=0.9", "pyright>=1.1"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+indent-width = 2
+
+[tool.ruff.format]
+quote-style = "single"
+indent-style = "space"

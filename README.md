@@ -1,116 +1,106 @@
-# hp: Hyperparameter Management Library
+# hp
 
-Defining, tuning and tracking hyperparameters in machine learning experiments can get messy. hp uses python classes to declaratively define your hyperparameters. 
+A small Python-native package for configuration, callable binding, nested parameter trees, and hyperparameter search.
 
-## Benefits
+```python
+from typing import Literal
+from hp import HP, Choice, LogRange
 
-1. Type annotated container for your parameters
-2. Automatically generated command line interface 
-3. Handles saving and loading of parameters
+class AdamWHP(HP):
+  method: Literal['adamw'] = 'adamw'
+  lr: float = LogRange(1e-6, 1e-3, default=2e-4)
+  weight_decay: float = 0.01
 
+class TrainHP(HP):
+  seed: int = 42
+  optimizer: AdamWHP = AdamWHP()
 
-## Install
-
-Install with pip
-
+p = TrainHP.from_cli()
+p.freeze()
 ```
-pip install hp
+
+## Nested and dynamic parameters
+
+Declared trees are strict:
+
+```python
+p.optimizer.lr = 1e-4
+p['optimizer.lr'] = 5e-5
 ```
 
-## Tour
+Dynamic trees auto-vivify:
 
-### Define Your Parameters
+```python
+p = HP.dynamic()
+p.opt.foo = 5
+p.rollout.temperature = 0.8
+```
+
+## Bind, watch, and wrap
+
+```python
+class Params(HP):
+  batch_size: int = 32
+
+p = Params()
+
+@p.bind
+def train(batch_size=8):
+  return batch_size
+
+train()  # 32; explicit calls do not mutate p
+```
+
+```python
+@p.watch
+def train(batch_size=8):
+  return batch_size
+
+train(batch_size=64)
+assert p.batch_size == 64
+```
+
+```python
+@p.wrap
+def train(batch_size=8):
+  return batch_size
+
+train()               # reads 64 from p
+train(batch_size=128) # updates p and calls with 128
+```
+
+Function-first usage:
 
 ```python
 import hp
 
+@hp.wrap
+def train(epochs: int = 10, lr: float = 2e-4):
+  ...
 
-class Params(hp.HyperParams):
-  learning_rate: hp.Range(0.001, 0.1) = 0.03
-  optimizer: hp.Choice(('SGD', 'Adam')) = 'SGD'
-
-  batch_size = 32
-  seed = 1
+train.hp.lr = 1e-4
+train()
 ```
 
-### Command Line Parser
+## Callable schemas
 
 ```python
-# parse from command line arguments
-params = Params.from_command()
+def train(epochs: int = 10, lr: float = 2e-4): ...
+
+TrainHP = HP.schema(train)
+p = TrainHP(lr=1e-4)
 ```
 
-### Environment Variables
+## Search spaces
 
 ```python
+class Params(HP):
+  lr: float = LogRange(1e-6, 1e-3, default=2e-4)
+  batch_size: int = Choice((2, 4, 8), default=4)
 
-params = Params.from_env(prefix='HP_')
+p = Params()
+for candidate in p.samples(20, seed=1):
+  train(candidate)
 ```
 
-
-### Global Constants
-
-```python
-params = Params.from_constants()  # load all CAP_CASE variables
-```
-
-
-### YAML / JSON 
-
-```python
-hp.save(params, 'params.yaml')
-
-params = Params.load('params.yaml')
-```
-
-
-### Binding
-
-```python
-
-params = hp.HyperParams()
-
-@params.bind
-def train(epochs=10):
-  pass
-
-
-train()  # use current param value (default to function default)
-
-train(epochs=4)  # override params
-```
-
-
-```python
-trainer.batch_size = params.bind('batch_size')
-```
-
-```python
-params.bind(Optimizer, fields={'lr': 'learning_rate'})
-```
-
-### Grid / Random Search
-
-```python
-
-# grid search
-for params in Params.grid():
-  pass
- 
-# random samples without replacement
-for params in Params.samples():
-  pass
-```
-
-
-### Change Tracking
-
-```python
-
-@params.on_change
-def log_changes(params, key, value):
-  print(f"changing {key} from {params[key]} to {value}")
-  
-params.learning_rate = 0.001
-# >> changing learning_rate from 0.03 to 0.001
-```
+Optional Optuna integration is available in `hp.optimize.optuna`.
