@@ -446,9 +446,13 @@ with hp.override(config, rollout='on'):
   handle(request)            # hp.active().rollout == 'on', only in this block
 ```
 
-`secret=True` keeps the key out of `hp.to_dict()`, `--help` and saved configs,
-while `hp.to_dict(config, secrets=True)` still gets it when you genuinely need
-to serialize everything.
+`secret=True` keeps the key out of `hp.to_dict()`, `hp.flatten()`, `--help` and
+saved configs, while passing `secrets=True` to either still gets it when you
+genuinely need to serialize everything.
+
+For logging, `hp.serializable(config)` is the safe shape: secrets dropped and
+anything a columnar store cannot hold — a model, a DataLoader, an open file —
+replaced by its type name rather than crashing the writer.
 
 ### Handing config to a subprocess
 

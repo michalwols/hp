@@ -527,15 +527,24 @@ class Params(metaclass=ParamsMeta):
       result[name] = copy.deepcopy(value)
     return result
 
-  def _flatten(self, prefix: str = '') -> dict[str, Any]:
+  def _flatten(self, prefix: str = '', *, secrets: bool = False) -> dict[str, Any]:
     output: dict[str, Any] = {}
+    fields = self._field_map
     for name, value in self._items():
+      field = fields.get(name)
+      if field is not None and field.secret and not secrets:
+        continue
       path = f'{prefix}.{name}' if prefix else name
       if isinstance(value, Params):
-        output.update(value._flatten(path))
+        output.update(value._flatten(path, secrets=secrets))
       else:
         output[path] = value
     return output
+
+  def _asdict(self) -> dict[str, Any]:
+    """Duck-type hook, so loggers and adapters can read params without
+    importing hp -- the same protocol NamedTuple exposes."""
+    return self._to_dict()
 
   def _fork(self, **updates: Any) -> 'Params':
     clone = copy.deepcopy(self)
@@ -895,8 +904,39 @@ def to_dict(params: Params, *, secrets: bool = False) -> dict[str, Any]:
   return params._to_dict(secrets=secrets)
 
 
-def flatten(params: Params, prefix: str = '') -> dict[str, Any]:
-  return params._flatten(prefix)
+def flatten(params: Params, prefix: str = '', *, secrets: bool = False) -> dict[str, Any]:
+  """Values keyed by dotted path. Secret fields are omitted unless asked for."""
+  return params._flatten(prefix, secrets=secrets)
+
+
+def _describe(value: Any) -> str:
+  kind = type(value)
+  name = getattr(kind, '__qualname__', kind.__name__)
+  module = getattr(kind, '__module__', '')
+  return f'{module}.{name}' if module and module != 'builtins' else name
+
+
+def serializable(params: Params, *, secrets: bool = False) -> dict[str, Any]:
+  """Values safe to write to JSON, parquet or a log.
+
+  Anything a columnar store cannot hold -- a model, a DataLoader, an open
+  file -- becomes its fully qualified type name rather than blowing up the
+  writer or silently pickling something enormous.
+  """
+  primitives = (str, int, float, bool, type(None))
+
+  def convert(value: Any) -> Any:
+    if isinstance(value, primitives):
+      return value
+    if isinstance(value, Params):
+      return serializable(value, secrets=secrets)
+    if isinstance(value, Mapping):
+      return {str(k): convert(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+      return [convert(v) for v in value]
+    return _describe(value)
+
+  return {key: convert(value) for key, value in params._to_dict(secrets=secrets).items()}
 
 
 def fork(params: Params, **updates: Any) -> Params:

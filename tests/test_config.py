@@ -203,3 +203,41 @@ def test_apply_candidate_forks_and_records_source():
   assert best.agent.system_prompt == 'IMPROVED'
   assert original.agent.system_prompt == 'You are a data agent.'
   assert hp.source(best, 'agent.system_prompt') == 'candidate'
+
+
+class Secretive(hp.Params):
+  lr: float = 0.1
+  api_key: str = hp.Field(default='sk-live-abc', secret=True)
+  handle: object = object()
+
+
+def test_flatten_omits_secrets_by_default():
+  # a logger flattening for columnar storage must not write the key out
+  assert 'api_key' not in hp.flatten(Secretive())
+  assert 'api_key' in hp.flatten(Secretive(), secrets=True)
+
+
+def test_serializable_stringifies_unloggable_values():
+  import json
+
+  values = hp.serializable(Secretive())
+  assert values['lr'] == 0.1
+  assert values['handle'] == 'object'      # type name, not the object
+  assert 'api_key' not in values
+  json.dumps(values)                        # writable to json/parquet
+
+
+def test_serializable_recurses():
+  class Outer(hp.Params):
+    inner: Secretive = Secretive()
+    items: list = [1, object()]
+
+  values = hp.serializable(Outer())
+  assert values['inner']['lr'] == 0.1
+  assert 'api_key' not in values['inner']
+  assert values['items'] == [1, 'object']
+
+
+def test_asdict_duck_type_hook():
+  # tools that already read NamedTuples pick params up for free
+  assert Secretive()._asdict()['lr'] == 0.1

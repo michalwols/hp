@@ -23,6 +23,7 @@ approach against the alternatives.
 | `06_resource_allocation.py` | sketch | symbolic constraints an OR solver can actually read |
 | `07_agent_optimization.py` | sketch | text components, traces, and an optimizer that edits a harness |
 | `08_priors_and_references.py` | sketch | mining cases, oracles, validators and priors out of logs, test suites and the current system |
+| `09_multilog.py` | sketch | hp as the config layer under a columnar tracking tool (parquet / lance / duckdb) |
 
 ## The question these are exploring
 
