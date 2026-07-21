@@ -231,33 +231,203 @@ evaluate(threshold=0.7)
 hp.calls(evaluate)   # [{'threshold': 0.7}]
 ```
 
-`hp.params` is one object doing the work of a registry, a decorator and an
-instrumenter, dispatching on what you give it:
+`hp.params` is one object holding the registry, the decorators and the
+instrumentation. Calling it always means the same thing — *the params of this* —
+and everything else has a name:
 
 ```python
-hp.params(fn)          # decorate and register
-hp.params(decorated)   # the params of something registered
-hp.params('train')     # the same, by name
-hp.params(module)      # instrument a module, returning a restore handle
-hp.params()            # the whole registry
-hp.params.calls(fn)    # recorded calls
-hp.params.surface()    # registry + environment + command line
+hp.params(train)          # the params of a registered target
+hp.params('train')        # the same, by name
+hp.params()               # the registry
+hp.params['train']        # one entry, with its mode and call log
+
+hp.params.wrap(fn)        # decorate: supply params, record explicit args
+hp.params.track(fn)       # decorate: record only
+hp.params.instrument(mod) # wrap a whole module
+
+hp.params.history()       # what everything was called with
+hp.params.collect()       # the whole config surface as one tree
+hp.params.inject(config)  # write config back out
 ```
 
-## Scoped overrides
+`@hp.wrap` and `@hp.track` are the same decorators at the top level.
 
-Overrides apply to a *fork*, held in a `ContextVar`, so nothing shared is
-mutated and threads and async tasks never see each other's values:
+## Collecting and injecting
+
+`collect` gathers every registered target into one tree, optionally folding in
+the environment and command line — a single object holding the program's whole
+configuration:
 
 ```python
-with hp.override(train, lr=1e-4):
-  train()        # sees lr=1e-4
-train()          # back to the registered value
+config = hp.params.collect(env=True, cli=True)
+config.train.lr           # from a parametrized train()
+config.torch.optim.Adam   # from an instrumented module
 ```
 
-`hp.scope(params)` makes a params object the ambient configuration, readable
-anywhere via `hp.active()`; `hp.override(**values)` with no target forks
-whatever is currently scoped.
+`inject` writes values back out. With no target they go to the environment,
+which is how you hand a resolved config to a subprocess:
+
+```python
+hp.params.inject(config)                 # -> os.environ, TRAIN__LR=0.0001
+subprocess.run(['python', 'train.py'])   # child reads it via hp.load(Cfg, hp.env)
+
+hp.params.inject(config, globals())      # or into a namespace
+```
+
+
+## Examples
+
+### A training run you can reproduce
+
+```python
+import hp
+
+class Optim(hp.Params):
+  name: str = hp.Choice(('adamw', 'sgd'))
+  lr: float = hp.LogRange(1e-6, 1e-2, default=3e-4, help='peak learning rate')
+  weight_decay: float = 0.01
+
+class Train(hp.Params):
+  seed: int = 42
+  epochs: int = 10
+  batch_size: int = hp.Choice((16, 32, 64), default=32)
+  data_dir: str = hp.Field(default='./data', env='DATA_DIR')
+  optim: Optim = Optim()
+
+config = hp.load(Train, 'configs/base.yaml', hp.env(prefix='TRAIN'), hp.cli)
+hp.validate(config)
+
+run_id = hp.stable_hash(config)          # identical config -> identical id
+hp.save(config, f'runs/{run_id}/config.yaml')
+hp.freeze(config)                        # nothing mutates it mid-run
+
+hp.sources(config)
+# {'seed': 'configs/base.yaml', 'optim.lr': 'cli', 'data_dir': 'env', ...}
+```
+
+When a run misbehaves, `hp.sources` answers *where did this value come from* —
+usually faster than reading four config layers by hand.
+
+### Swapping optimizers without branching
+
+```python
+from typing import Literal
+
+class AdamW(hp.Params):
+  name: Literal['adamw'] = 'adamw'
+  lr: float = 3e-4
+  weight_decay: float = 0.01
+
+class SGD(hp.Params):
+  name: Literal['sgd'] = 'sgd'
+  lr: float = 0.1
+  momentum: float = 0.9
+  nesterov: bool = True
+
+class Train(hp.Params):
+  optim: AdamW | SGD = AdamW()
+
+config = hp.load(Train, hp.cli)   # --optim.name sgd --optim.momentum 0.95
+```
+
+`config.optim` is now an `SGD`, with `momentum` available and `weight_decay`
+gone. Each optimizer declares only the arguments it actually takes, and
+`hp.construct` passes only what the constructor accepts:
+
+```python
+IMPL = {'adamw': torch.optim.AdamW, 'sgd': torch.optim.SGD}
+optimizer = hp.construct(config.optim, IMPL[config.optim.name], params=model.parameters())
+```
+
+### A sweep where some options only apply sometimes
+
+```python
+class RL(hp.Params):
+  method: str = hp.Choice(('sft', 'dpo', 'grpo'))
+  kl_coef: float = hp.LogRange(1e-4, 0.2, default=0.02,
+                               when=lambda root: root.rl.method in {'dpo', 'grpo'})
+  group_size: int = hp.Choice((4, 8, 16), default=8,
+                              when=lambda root: root.rl.method == 'grpo')
+
+class Sweep(hp.Params):
+  rl: RL = RL()
+  lr: float = hp.LogRange(1e-6, 1e-3, default=2e-4)
+
+for trial in hp.samples(Sweep(), 50, seed=0):
+  score = train(trial)
+  results.append((hp.stable_hash(trial), score, hp.to_dict(trial)))
+```
+
+`group_size` is only drawn for GRPO trials, so the sweep does not waste runs
+distinguishing values that cannot matter.
+
+### What did that library actually use?
+
+```python
+import torch.optim
+
+hp.params.instrument(torch.optim)
+trainer.train()                      # builds an optimizer somewhere inside
+
+hp.params.history('torch.optim.AdamW')
+# [{'lr': 3e-05, 'weight_decay': 0.01, 'eps': 1e-08}]
+```
+
+Turn it around with `override=True` to set values in code you do not control:
+
+```python
+hp.params.instrument(torch.optim, select=['AdamW'], override=True)
+hp.params('torch.optim.AdamW').lr = 1e-5   # applies wherever it gets constructed
+```
+
+### Parallel trials that do not interfere
+
+```python
+@hp.wrap
+def train(lr: float = 1e-3, seed: int = 0):
+  ...
+
+async def trial(lr):
+  with hp.override(train, lr=lr):
+    return await asyncio.to_thread(train)
+
+scores = await asyncio.gather(*(trial(x) for x in (1e-3, 3e-4, 1e-4)))
+```
+
+Each override applies to a fork held in a `ContextVar`, so the three trials
+never see each other's values — and the registered params are unchanged
+afterwards.
+
+### Service configuration and feature flags
+
+```python
+class Service(hp.Params):
+  rollout: str = hp.Choice(('off', 'shadow', 'on'), default='off')
+  timeout_s: float = hp.Range(0.1, 30.0, default=5.0)
+  api_key: str = hp.Field(default='', secret=True, env='SERVICE_API_KEY')
+
+config = hp.load(Service, '/etc/svc/config.yaml', hp.env(prefix='SVC'), hp.cli)
+
+with hp.override(config, rollout='on'):
+  handle(request)            # hp.active().rollout == 'on', only in this block
+```
+
+`secret=True` keeps the key out of `hp.to_dict()`, `--help` and saved configs,
+while `hp.to_dict(config, secrets=True)` still gets it when you genuinely need
+to serialize everything.
+
+### Handing config to a subprocess
+
+```python
+config = hp.load(Train, hp.cli)
+hp.params.inject(config, prefix='TRAIN__')     # -> TRAIN__OPTIM__LR=0.0003
+subprocess.run(['python', 'worker.py'])
+```
+
+```python
+# worker.py
+config = hp.load(Train, hp.env(prefix='TRAIN'))
+```
 
 ## Callable schemas
 

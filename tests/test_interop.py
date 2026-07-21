@@ -133,8 +133,8 @@ def test_instrument_records_calls_and_restores():
     instance = module.Model(hidden=32)
 
     assert sorted(handle.names) == ['fakelib.Model', 'fakelib.build']
-    assert hp.params.calls('fakelib.build') == [{'width': 4}]
-    assert hp.params.calls('fakelib.Model') == [{'hidden': 32}]  # no self
+    assert hp.params.history('fakelib.build') == [{'width': 4}]
+    assert hp.params.history('fakelib.Model') == [{'hidden': 32}]  # no self
     assert isinstance(instance, Model)
 
   assert module.build is build
@@ -144,7 +144,7 @@ def test_instrument_records_calls_and_restores():
 def test_instrument_select_and_override():
   module, build, _ = fake_module()
 
-  hp.params(module, select=['build'], override=True)
+  hp.params.instrument(module, select=['build'], override=True)
   assert 'fakelib.Model' not in hp.params.registry
 
   hp.params('fakelib.build').width = 100
@@ -157,23 +157,67 @@ def test_instrument_select_and_override():
 
 def test_instrumenting_twice_raises():
   module, _, _ = fake_module()
-  hp.params(module)
+  hp.params.instrument(module)
   try:
     with pytest.raises(RuntimeError, match='already instrumented'):
-      hp.params(module)
+      hp.params.instrument(module)
   finally:
     hp.params.restore(module)
 
 
-def test_surface_reports_everything():
-  @hp.params(name='train')
+def test_collect_builds_one_tree_of_the_surface():
+  @hp.wrap(name='train')
   def train(epochs: int = 3):
     return epochs
 
-  train()
-  report = hp.params.surface()
-  assert report['targets']['train']['params'] == {'epochs': 3}
-  assert 'env' in report and 'cli' in report
+  @hp.wrap(name='evaluate')
+  def evaluate(threshold: float = 0.5):
+    return threshold
+
+  config = hp.params.collect()
+  assert config.train.epochs == 3
+  assert config.evaluate.threshold == 0.5
+
+
+def test_collect_can_fold_in_env(monkeypatch):
+  @hp.wrap(name='train')
+  def train(epochs: int = 3):
+    return epochs
+
+  monkeypatch.setenv('TRAIN__EPOCHS', '9')
+  assert hp.params.collect(env=True).train.epochs == 9
+
+
+def test_inject_writes_config_to_the_environment(monkeypatch):
+  class Config(hp.Params):
+    seed: int = 7
+
+  monkeypatch.delenv('SEED', raising=False)
+  hp.params.inject(Config())
+  assert os.environ['SEED'] == '7'
+
+
+def test_inject_into_a_namespace():
+  class Config(hp.Params):
+    seed: int = 7
+
+  scope = {}
+  hp.params.inject(Config(), scope, uppercase=True)
+  assert scope == {'SEED': 7}
+
+
+def test_history_across_targets():
+  @hp.track(name='a')
+  def one(x: int = 1):
+    return x
+
+  @hp.track(name='b')
+  def two(y: int = 2):
+    return y
+
+  one(5)
+  assert hp.params.history() == {'a': [{'x': 5}]}
+  assert hp.params.history('a') == [{'x': 5}]
 
 
 def test_cli_collects_positionals_instead_of_failing(monkeypatch):
@@ -188,3 +232,17 @@ def test_from_command_ignores_positionals():
     seed: int = 1
 
   assert hp.load(Config, hp.cli(['input.txt', '--seed', '4'])).seed == 4
+
+
+def test_construct_accepts_a_params_override():
+  # both positional-only, so `params=` lands in overrides where torch wants it
+  class Optim(hp.Params):
+    lr: float = 0.1
+
+  class FakeSGD:
+    def __init__(self, params, lr=0.0):
+      self.params, self.lr = params, lr
+
+  built = hp.construct(Optim(), FakeSGD, params=[1, 2])
+  assert built.params == [1, 2]
+  assert built.lr == 0.1

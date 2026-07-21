@@ -308,7 +308,9 @@ class Params(metaclass=ParamsMeta):
       self._fields[name] = field
     else:
       value = coerce(value, field.type, field)
-    old = getattr(self, name, MISSING)
+    # read straight from __dict__: getattr() would trigger __getattr__, and on
+    # dynamic params that auto-vivifies a node over the field just created
+    old = self.__dict__.get(name, MISSING)
     for callback in self._change_callbacks:
       callback(self, name, old, value)
     object.__setattr__(self, name, value)

@@ -65,7 +65,7 @@ from .fields import (
 )
 from .adapt import construct, to_argparse
 from .context import active, override, scope
-from .registry import Entry, params, track
+from .registry import Entry, params, parametrize as wrap, track
 from .views import cli, env
 
 __all__ = [
@@ -120,6 +120,7 @@ __all__ = [
   'apply_candidate',
   # registry, decorator and instrumenter, in one object
   'params',
+  'wrap',
   'track',
   # live views
   'env',

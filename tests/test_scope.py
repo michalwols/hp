@@ -16,7 +16,7 @@ def clean():
 
 
 def test_override_is_temporary():
-  @hp.params
+  @hp.wrap
   def train(lr: float = 1e-3):
     return lr
 
@@ -27,7 +27,7 @@ def test_override_is_temporary():
 
 
 def test_override_does_not_mutate_the_original():
-  @hp.params
+  @hp.wrap
   def train(lr: float = 1e-3):
     return lr
 
@@ -38,7 +38,7 @@ def test_override_does_not_mutate_the_original():
 
 
 def test_override_nests():
-  @hp.params
+  @hp.wrap
   def train(lr: float = 1e-3):
     return lr
 
@@ -78,7 +78,7 @@ def test_override_of_the_active_scope():
 
 
 def test_threads_do_not_see_each_others_overrides():
-  @hp.params
+  @hp.wrap
   def train(lr: float = 1e-3):
     return lr
 
@@ -101,7 +101,7 @@ def test_threads_do_not_see_each_others_overrides():
 
 
 def test_async_tasks_are_isolated():
-  @hp.params
+  @hp.wrap
   def train(lr: float = 1e-3):
     return lr
 

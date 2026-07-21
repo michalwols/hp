@@ -103,7 +103,7 @@ def test_update_can_still_be_strict():
 def test_parametrize_fills_and_records_arguments():
   hp.params.clear()
 
-  @hp.params
+  @hp.wrap
   def train(epochs: int = 10, lr: float = 2e-4):
     return epochs, lr
 
@@ -123,14 +123,14 @@ def test_track_records_without_changing_behavior():
   assert train(lr=1e-3) == (10, 1e-3)
   assert train(5) == (5, 2e-4)          # defaults untouched by params
 
-  assert hp.params.calls(train) == [{'lr': 1e-3}, {'epochs': 5}]
+  assert hp.params.history(train) == [{'lr': 1e-3}, {'epochs': 5}]
   assert hp.params(train).lr == 2e-4    # never mutated
 
 
 def test_registry_collects_targets():
   hp.params.clear()
 
-  @hp.params(name='alpha')
+  @hp.wrap(name='alpha')
   def alpha(a: int = 1):
     return a
 
@@ -156,7 +156,7 @@ def test_schema_from_callable():
 def test_parametrize_exposes_params_on_the_target():
   hp.params.clear()
 
-  @hp.params
+  @hp.wrap
   def train(epochs: int = 10):
     return epochs
 
@@ -257,3 +257,16 @@ def test_schema_accepts_a_base_class():
   assert Schema.__name__ == 'TrainSchema'
   assert p.seed == 42
   assert p.epochs == 10
+
+
+def test_dynamic_fields_keep_their_value_type():
+  # reading `old` during assignment used to auto-vivify a node over the field
+  # being created, leaving every dynamic field typed as Params and uncoerced
+  config = hp.Dynamic()
+  config._update({'epochs': 3, 'lr': 0.1, 'name': 'run'})
+
+  assert hp.fields(config)['epochs'].type is int
+  assert hp.fields(config)['lr'].type is float
+
+  config.epochs = '9'
+  assert config.epochs == 9  # coerced, not left a string

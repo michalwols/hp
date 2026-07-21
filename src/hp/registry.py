@@ -155,74 +155,39 @@ def track(target: Any = None, *, name: str | None = None):
   return apply(target) if target is not None else apply
 
 
-def surface() -> dict[str, Any]:
-  """Everything hp knows about this process, in one place.
-
-  Registered targets with their params and call counts, plus the current
-  environment and command line.
-  """
-  from .core import to_dict
-  from .views import cli, env
-
-  return {
-    'targets': {
-      name: {
-        'mode': record.mode,
-        'params': to_dict(record.params),
-        'calls': len(record.calls),
-      }
-      for name, record in _REGISTRY.items()
-    },
-    'env': env.to_dict(),
-    'cli': cli.to_dict(),
-  }
-
-
 class ParamsAPI:
-  """The registry, the decorator, and the instrumenter in one object.
+  """The registry, decorators and instrumentation, behind explicit names.
 
-  What it does depends on what you hand it:
+  Calling it always means the same thing -- *give me the params for this* --
+  and everything else is a named method:
 
-  ==========================  ==================================================
-  ``hp.params()``             the whole registry, name -> Entry
-  ``hp.params(fn)``           decorate and register (see :func:`parametrize`)
-  ``hp.params(decorated)``    the params of something already registered
-  ``hp.params('name')``       the same, by registry name
-  ``hp.params(module)``       instrument a module, returning a restore handle
-  ``hp.params(params_obj)``   returned unchanged, so it is safe to call twice
-  ==========================  ==================================================
+  ============================  ================================================
+  ``hp.params(target)``         the params of a registered target or an object
+  ``hp.params()``               the registry, name -> Entry
+  ``hp.params['name']``         one Entry
+  ``hp.params.wrap(fn)``        decorate: supply params, record explicit args
+  ``hp.params.track(fn)``       decorate: record only, change nothing
+  ``hp.params.instrument(mod)`` wrap a whole module
+  ``hp.params.history()``       what everything was called with
+  ``hp.params.collect()``       one tree of the whole config surface
+  ``hp.params.inject(cfg)``     write config out, to the environment or a scope
+  ============================  ================================================
   """
 
-  def __call__(self, target: Any = None, /, **kwargs: Any) -> Any:
+  def __call__(self, target: Any = None, /) -> Any:
     if target is None:
-      # used as a decorator factory: @hp.params(name='train')
-      if kwargs:
-        return lambda inner: self(inner, **kwargs)
       return _REGISTRY
-
     if isinstance(target, Params):
       return target
-
     if isinstance(target, str):
       return entry(target).params
-
-    if isinstance(target, types.ModuleType):
-      from .instrument import instrument
-
-      return instrument(target, **kwargs)
-
-    # already registered, by reference or through its wrapper
     try:
       return entry(target).params
     except KeyError:
       pass
-
-    if callable(target):
-      return parametrize(target, **kwargs)
-
     from .adapt import from_object
 
-    return from_object(target, **kwargs)
+    return from_object(target)
 
   # -- registry ------------------------------------------------------------
 
@@ -249,24 +214,25 @@ class ParamsAPI:
   def entry(self, target: Any) -> Entry:
     return entry(target)
 
-  def calls(self, target: Any) -> list[dict[str, Any]]:
-    return entry(target).calls
-
   def clear(self) -> None:
     _REGISTRY.clear()
 
-  def surface(self) -> dict[str, Any]:
-    return surface()
-
   # -- decorators ----------------------------------------------------------
 
-  def track(self, target: Any = None, **kwargs: Any) -> Any:
-    return track(target, **kwargs)
-
   def wrap(self, target: Any = None, **kwargs: Any) -> Any:
+    """Supply params to a callable and record what it was called with."""
     return parametrize(target, **kwargs)
 
+  def track(self, target: Any = None, **kwargs: Any) -> Any:
+    """Record what a callable was called with, changing nothing."""
+    return track(target, **kwargs)
+
   # -- instrumentation -----------------------------------------------------
+
+  def instrument(self, module: Any, **kwargs: Any):
+    from .instrument import instrument
+
+    return instrument(module, **kwargs)
 
   def instrumented(self, module: Any, **kwargs: Any):
     from .instrument import instrumented
@@ -277,6 +243,76 @@ class ParamsAPI:
     from .instrument import restore
 
     restore(module)
+
+  # -- inspection ----------------------------------------------------------
+
+  def history(self, target: Any = None) -> Any:
+    """Recorded calls: for one target, or every target keyed by name."""
+    if target is not None:
+      return entry(target).calls
+    return {name: record.calls for name, record in _REGISTRY.items() if record.calls}
+
+  def collect(self, *sources: Any, env: bool = False, cli: bool = False) -> Params:
+    """The whole config surface as one tree.
+
+    Every registered target contributes a node under its own name, so
+    ``hp.params.collect().train.lr`` reaches a parametrized ``train``. Extra
+    sources are layered on top, and ``env``/``cli`` fold those in too.
+    """
+    from .core import Dynamic, _nest, flatten
+
+    values: dict[str, Any] = {}
+    for name, record in _REGISTRY.items():
+      for path, value in flatten(record.params).items():
+        values[f'{name}.{path}'] = value
+
+    config = Dynamic()
+    config._update(_nest(values), source='registry')
+
+    layers = list(sources)
+    if env:
+      from .views import env as env_view
+
+      layers.append(env_view)
+    if cli:
+      from .views import cli as cli_view
+
+      layers.append(cli_view)
+    if layers:
+      config._apply_layers(*layers)
+    return config
+
+  def inject(
+    self,
+    config: Params,
+    into: Any = None,
+    *,
+    prefix: str = '',
+    uppercase: bool | None = None,
+  ) -> Params:
+    """Write config values outward.
+
+    With no target the values go into the environment, which is how you hand
+    a resolved config to a subprocess. Pass a mapping (``globals()``, a dict)
+    to write there instead.
+    """
+    import os
+
+    from .core import flatten
+    from .views import Env
+
+    values = flatten(config)
+    if into is None or isinstance(into, Env):
+      upper = True if uppercase is None else uppercase
+      for path, value in values.items():
+        key = f'{prefix}{path.replace(".", "__")}'
+        os.environ[key.upper() if upper else key] = str(value)
+    else:
+      upper = False if uppercase is None else uppercase
+      for path, value in values.items():
+        key = f'{prefix}{path.replace(".", "_")}'
+        into[key.upper() if upper else key] = value
+    return config
 
   def __repr__(self) -> str:
     return f'<hp.params: {len(_REGISTRY)} registered>'

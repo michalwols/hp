@@ -80,9 +80,13 @@ def from_object(obj: Any, *, name: str | None = None) -> Params:
   return node
 
 
-def construct(params: Params, target: Any, **overrides: Any) -> Any:
-  """Build ``target`` from params, passing only what its signature accepts."""
-  values = {**to_dict(params), **overrides}
+def construct(config: Params, target: Any, /, **overrides: Any) -> Any:
+  """Build ``target`` from params, passing only what its signature accepts.
+
+  Both arguments are positional-only, so an override may be called ``config``
+  or ``params`` -- which torch optimizers, among others, actually take.
+  """
+  values = {**to_dict(config), **overrides}
   try:
     signature = inspect.signature(target)
     accepted = {

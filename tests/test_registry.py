@@ -13,7 +13,7 @@ def clean_registry():
 
 
 def test_parametrize_reads_and_writes_params():
-  @hp.params
+  @hp.wrap
   def train(epochs: int = 10, lr: float = 2e-4):
     return epochs, lr
 
@@ -29,7 +29,7 @@ def test_parametrize_accepts_existing_params():
 
   shared = Shared()
 
-  @hp.params(params=shared)
+  @hp.wrap(params=shared)
   def train(epochs: int = 10):
     return epochs
 
@@ -38,13 +38,13 @@ def test_parametrize_accepts_existing_params():
 
 
 def test_parametrize_can_record_calls():
-  @hp.params(record=True)
+  @hp.wrap(record=True)
   def train(epochs: int = 10):
     return epochs
 
   train()
   train(epochs=2)
-  assert len(hp.params.calls(train)) == 2
+  assert len(hp.params.history(train)) == 2
 
 
 def test_track_records_without_mutating():
@@ -55,7 +55,7 @@ def test_track_records_without_mutating():
   assert train(lr=1e-3) == (10, 1e-3)
   assert train(5) == (5, 2e-4)
 
-  assert hp.params.calls(train) == [{'lr': 1e-3}, {'epochs': 5}]
+  assert hp.params.history(train) == [{'lr': 1e-3}, {'epochs': 5}]
   assert hp.params(train).lr == 2e-4
 
 
@@ -72,7 +72,7 @@ def test_track_keeps_a_reference_to_the_target():
 
 
 def test_registry_is_keyed_by_name():
-  @hp.params(name='alpha')
+  @hp.wrap(name='alpha')
   def one(a: int = 1):
     return a
 
@@ -85,14 +85,14 @@ def test_registry_is_keyed_by_name():
   assert hp.params.entry('beta').mode == 'track'
 
 
-def test_unregistered_callable_is_decorated():
-  # hp.params dispatches: an unregistered callable gets parametrized
+def test_calling_params_never_decorates():
+  # hp.params(x) always means "the params of x", never "wrap x"
   def plain(a: int = 1):
     return a
 
-  wrapped = hp.params(plain)
-  assert wrapped() == 1
+  wrapped = hp.wrap(plain)
   assert hp.params(wrapped).a == 1
+  assert hp.params(wrapped) is hp.params.entry(wrapped).params
 
 
 def test_unknown_name_raises():
@@ -101,7 +101,7 @@ def test_unknown_name_raises():
 
 
 def test_parametrize_works_on_classes():
-  @hp.params
+  @hp.wrap
   class Model:
     def __init__(self, width: int = 8):
       self.width = width
