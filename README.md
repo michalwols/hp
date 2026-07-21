@@ -38,9 +38,21 @@ hp.fork(params, seed=7)
 hp.space(params)
 ```
 
-`hp.Params` intentionally has an empty public namespace. Attribute access
-(`params.lr`), item access (`params['optim.lr']`), `in`, `len()` and iteration
-all still work — they are dunders, so they cost you no names.
+`hp.Params` intentionally has an empty public namespace. Everything a config
+object should do is a dunder, so it costs you no names:
+
+```python
+params.lr                      # attribute access
+params['optim.lr']             # dotted item access
+'lr' in params, len(params)    # membership and size
+for name in params: ...        # iteration
+params | {'lr': 1e-4}          # merge, like a dict
+params == other, hash(params)  # value semantics
+print(params)                  # aligned, one value per line, with provenance
+```
+
+In a notebook `params` renders as a table. `repr()` stays a single line;
+`f'{params:v}'` gives the long form.
 
 ## Nested parameters
 

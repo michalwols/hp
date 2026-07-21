@@ -1,6 +1,5 @@
 """Union switching, provenance, layering, conditionals, and CLI help."""
 
-import os
 import warnings
 from typing import Literal
 

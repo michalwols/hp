@@ -11,9 +11,9 @@ from collections import OrderedDict
 from collections.abc import Iterable, Iterator, Mapping
 from itertools import product
 from pathlib import Path
-from typing import Any, ClassVar, Literal, Union, get_args, get_origin, get_type_hints
+from typing import Any, ClassVar, Literal, Union, get_args, get_origin
 
-from .fields import Choice, Derived, Field, MISSING, Range, ValidationError
+from .fields import Derived, Field, MISSING, ValidationError
 
 
 class UnknownParam(UserWarning):
@@ -777,9 +777,74 @@ class Params(metaclass=ParamsMeta):
     # params object while it is in use as a dict key
     return hash(self._stable_hash())
 
+  def __bool__(self) -> bool:
+    # a config object always exists; without this, __len__ makes an empty
+    # one falsy and `if config:` silently takes the wrong branch
+    return True
+
+  def __or__(self, other: Any) -> 'Params':
+    """``config | overrides`` -> a new config, like dict merging."""
+    if not isinstance(other, (Params, Mapping)):
+      return NotImplemented
+    return self._fork()._update(
+      other._to_dict() if isinstance(other, Params) else other,
+    )
+
+  def __ror__(self, other: Any) -> 'Params':
+    if not isinstance(other, Mapping):
+      return NotImplemented
+    return type(self)(**other)._update(self._to_dict())
+
+  def __ior__(self, other: Any) -> 'Params':
+    if not isinstance(other, (Params, Mapping)):
+      return NotImplemented
+    return self._update(other._to_dict() if isinstance(other, Params) else other)
+
+  def __dir__(self) -> list[str]:
+    return sorted(set(super().__dir__()) | set(self._field_map))
+
   def __repr__(self) -> str:
     body = ', '.join(f'{k}={v!r}' for k, v in self._items())
     return f'{type(self).__name__}({body})'
+
+  def __str__(self) -> str:
+    """Aligned, one value per line, annotated with where it came from."""
+    rows = self._flatten()
+    if not rows:
+      return f'{type(self).__name__}()'
+    sources = self._all_sources()
+    width = max(len(path) for path in rows)
+    lines = [f'{type(self).__name__}(']
+    for path, value in rows.items():
+      origin = sources.get(path, '')
+      note = f'  # {origin}' if origin and origin != 'default' else ''
+      lines.append(f'  {path.ljust(width)} = {value!r}{note}')
+    lines.append(')')
+    return '\n'.join(lines)
+
+  def __format__(self, spec: str) -> str:
+    return str(self) if spec == 'v' else repr(self)
+
+  def __rich_repr__(self):
+    yield from self._items()
+
+  def _repr_html_(self) -> str:
+    """Rendered as a table in Jupyter."""
+    from html import escape
+
+    sources = self._all_sources()
+    rows = ''.join(
+      f'<tr><td style="text-align:left"><code>{escape(path)}</code></td>'
+      f'<td style="text-align:left"><code>{escape(repr(value))}</code></td>'
+      f'<td style="text-align:left;opacity:.6">{escape(sources.get(path, ""))}</td></tr>'
+      for path, value in self._flatten().items()
+    )
+    return (
+      f'<table><thead><tr><th style="text-align:left">{escape(type(self).__name__)}</th>'
+      f'<th style="text-align:left">value</th>'
+      f'<th style="text-align:left">source</th></tr></thead>'
+      f'<tbody>{rows}</tbody></table>'
+    )
 
 
 class Dynamic(Params, dynamic=True):

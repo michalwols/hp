@@ -57,7 +57,7 @@ def override(target: Any = None, **values: Any) -> Iterator[Params]:
   object, or omitted to override the active scope. The block sees a fork, so
   concurrent tasks never observe each other's overrides.
   """
-  from .registry import Entry, _REGISTRY, entry
+  from .registry import Entry, entry
 
   name: str | None = None
   base: Params | None = None

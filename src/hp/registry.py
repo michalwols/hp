@@ -20,7 +20,6 @@ from __future__ import annotations
 import functools
 from collections import OrderedDict
 from dataclasses import dataclass, field
-import types
 from typing import Any
 
 from .callable import _signature

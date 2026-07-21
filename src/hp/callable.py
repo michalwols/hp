@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import functools
 import inspect
 from collections import OrderedDict
-from collections.abc import Mapping
 from typing import Any, Annotated, get_args, get_origin, get_type_hints
 
 from .fields import Field, MISSING
