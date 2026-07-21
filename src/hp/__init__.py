@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from .callable import fields_from_callable
-from .core import Dynamic, Params
+from .core import Dynamic, Params, UnknownParam
 from .fields import (
   Choice,
   Field,
@@ -36,6 +36,7 @@ def schema(target: Any, **kwargs: Any):
 __all__ = [
   'Params',
   'Dynamic',
+  'UnknownParam',
   'Field',
   'Choice',
   'Range',

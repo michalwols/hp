@@ -54,13 +54,50 @@ def test_declared_class_can_opt_into_dynamic():
   assert p.to_dict() == {'seed': 42, 'rollout': {'temperature': 0.8}}
 
 
-def test_declared_params_reject_unknown_keys():
+def test_unknown_write_becomes_a_real_field():
+  p = TrainParams()
+  p.extra = 5
+  assert p.extra == 5
+  assert p.to_dict()['extra'] == 5
+  assert 'extra' in p.fields
+
+
+def test_unknown_read_still_raises():
+  p = TrainParams()
   try:
-    TrainParams(nope=1)
+    p.sed  # typo for seed
+  except AttributeError:
+    pass
+  else:
+    raise AssertionError('undeclared reads should raise on non-dynamic params')
+
+
+def test_unknown_key_warns_with_suggestion():
+  import pytest
+
+  with pytest.warns(hp.UnknownParam, match='did you mean'):
+    p = TrainParams(sed=1)
+  assert p.sed == 1
+
+
+def test_dynamic_does_not_warn():
+  import warnings
+
+  with warnings.catch_warnings():
+    warnings.simplefilter('error')
+    p = hp.Dynamic(anything=1)
+    p.other = 2
+  assert p.to_dict() == {'anything': 1, 'other': 2}
+
+
+def test_update_can_still_be_strict():
+  p = TrainParams()
+  try:
+    p.update({'nope': 1}, strict=True)
   except KeyError:
     pass
   else:
-    raise AssertionError('declared params should reject unknown keys')
+    raise AssertionError('strict=True should still reject unknown keys')
 
 
 def test_bind_watch_wrap():

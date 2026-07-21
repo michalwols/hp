@@ -21,16 +21,47 @@ params.freeze()
 
 `import hp` is all you need — everything hangs off the module.
 
-## Nested and dynamic parameters
-
-Declared trees are strict; unknown names are rejected:
+## Nested parameters
 
 ```python
 params.optimizer.lr = 1e-4
-params['optimizer.lr'] = 5e-5
+params['optimizer.lr'] = 5e-5   # dotted paths create intermediate nodes
 ```
 
-`hp.Dynamic` drops the schema and auto-vivifies intermediate nodes:
+## Writes are open, reads are strict
+
+Setting a name that was never declared is allowed, and it becomes a real field —
+so it round-trips through `to_dict()` and `save()` like any other:
+
+```python
+params.notes = 'sweep A'
+params.save('config.json')   # notes is in there
+```
+
+Reading a name that was never set still raises, which is what catches typos:
+
+```python
+params.optimzer   # AttributeError, rather than a silent empty value
+```
+
+That asymmetry is deliberate. A typo'd read is the dangerous case — without it
+`if params.use_amp:` would quietly evaluate to false forever. A typo'd write only
+adds an unused key, so it warns instead:
+
+```python
+TrainParams(sed=1)
+# UnknownParam: TrainParams has no declared field 'sed'; did you mean 'seed'?
+```
+
+Command line flags behave the same way — an unrecognized flag is kept and warned
+about, never silently dropped. Use `params.update(data, strict=True)` to turn
+unknown keys into a `KeyError` instead, and filter or raise on `hp.UnknownParam`
+to tune how loud it is.
+
+## Dynamic trees
+
+`hp.Dynamic` additionally auto-vivifies on read, so intermediate nodes need no
+declaration and nothing warns:
 
 ```python
 config = hp.Dynamic()

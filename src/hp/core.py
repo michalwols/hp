@@ -16,6 +16,29 @@ from typing import Any, ClassVar, Literal, Union, get_args, get_origin, get_type
 from .fields import Choice, Field, MISSING, Range, ValidationError
 
 
+class UnknownParam(UserWarning):
+  """Warned when a value is set for a name with no declared field.
+
+  The value is still accepted and becomes a real field; the warning exists
+  so typos in config files and command lines are visible instead of silent.
+  """
+
+
+def _unknown_param_warning(owner: 'Params', name: str, stacklevel: int = 3) -> None:
+  if owner.__dynamic__:
+    return
+  import difflib
+  import warnings
+
+  close = difflib.get_close_matches(name, tuple(owner.fields), n=3)
+  hint = f'; did you mean {" or ".join(repr(c) for c in close)}?' if close else ''
+  warnings.warn(
+    f'{type(owner).__name__} has no declared field {name!r}{hint}',
+    UnknownParam,
+    stacklevel=stacklevel,
+  )
+
+
 def _is_params_type(value: Any) -> bool:
   return isinstance(value, type) and issubclass(value, Params)
 
@@ -211,8 +234,8 @@ class Params(MutableMapping[str, Any], metaclass=ParamsMeta):
         value = coerce(value, field.type, field)
       object.__setattr__(self, name, value)
     for mapping in args:
-      self.update(mapping, strict=True)
-    self.update(values, strict=True)
+      self.update(mapping)
+    self.update(values)
 
   @property
   def fields(self) -> OrderedDict[str, Field]:
@@ -237,9 +260,7 @@ class Params(MutableMapping[str, Any], metaclass=ParamsMeta):
       raise TypeError(f'{type(self).__name__} is frozen')
     field = self.fields.get(name)
     if field is None:
-      if not self.__dynamic__:
-        object.__setattr__(self, name, value)
-        return
+      # unknown names become real fields, so they serialize like declared ones
       if isinstance(value, Mapping) and not isinstance(value, Params):
         node = Dynamic()
         node.update(value, strict=False)
@@ -323,6 +344,7 @@ class Params(MutableMapping[str, Any], metaclass=ParamsMeta):
       if key not in self.fields:
         if strict and not self.__dynamic__:
           raise KeyError(f'unknown parameter {key!r}; expected one of {tuple(self.fields)!r}')
+        _unknown_param_warning(self, key)
         setattr(self, key, value)
         continue
       current = getattr(self, key, MISSING)

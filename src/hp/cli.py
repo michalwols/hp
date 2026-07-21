@@ -4,7 +4,7 @@ import json
 import sys
 from typing import Any
 
-from .core import coerce
+from .core import _unknown_param_warning, coerce
 
 
 def _value(text: str) -> Any:
@@ -42,6 +42,10 @@ def parse(hp, args: list[str] | None = None):
       node, name = hp._path(path)
       field = node.fields[name]
       value = coerce(value, field.type, field)
+    else:
+      # accepted as a new field, but a flag matching nothing is usually a typo
+      node, name = hp._path(path, create=True)
+      _unknown_param_warning(node, name, stacklevel=4)
     hp[path] = value
     index += 1
   return hp
