@@ -225,6 +225,81 @@ hp.registry()        # {'train': Entry(...), 'evaluate': Entry(...)}
 hp.params('train')   # by name as well as by reference
 ```
 
+## Environment and command line
+
+`hp.env` and `hp.cli` are live views, not snapshots. Assigning to `hp.env` writes
+through to `os.environ`, so subprocesses and later imports see it:
+
+```python
+hp.env.CUDA_VISIBLE_DEVICES = '0'
+hp.env['HF_HOME']                    # reads os.environ
+
+hp.cli.optim.lr                      # parsed --optim.lr
+hp.cli.args                          # positional arguments
+```
+
+Both also serve as layers, replacing the `'env'` / `'cli'` strings:
+
+```python
+params = hp.layered(Config, 'base.yaml', hp.env(prefix='APP'), hp.cli)
+```
+
+`hp.surface()` returns everything hp knows about the process at once —
+registered targets with their params and call counts, plus the environment and
+command line.
+
+## Interop
+
+Other config shapes are recognized structurally, so none of these libraries need
+to be installed:
+
+```python
+@dataclasses.dataclass
+class Cfg:
+  lr: float = 1e-3
+
+params = hp.from_object(Cfg(lr=0.5))   # also attrs, pydantic, NamedTuple,
+                                       # argparse.Namespace, mappings, params
+hp.construct(params, Cfg)              # -> Cfg(lr=0.5)
+```
+
+`hp.construct` passes only what the target's signature accepts, so extra fields
+are dropped rather than raising.
+
+For codebases that already parse with argparse:
+
+```python
+parser = hp.to_argparse(params)        # flags, types, choices, defaults, --no-x
+params = hp.from_argparse(parser)      # the other direction
+```
+
+## Instrumenting a module
+
+Wrap every callable in a module to record what it is called with:
+
+```python
+hp.instrument(torch.optim)
+Adam(model.parameters(), lr=3e-4)
+hp.calls('torch.optim.Adam')      # [{'lr': 0.0003, ...}]
+```
+
+Classes keep their identity — `__init__` is wrapped rather than the class
+replaced — so `isinstance` and subclassing are unaffected. `select=` and
+`exclude=` narrow what gets wrapped, and `override=True` additionally lets
+explicitly-set params supply arguments the caller omitted:
+
+```python
+hp.instrument(mylib, select=['Adam'], override=True)
+hp.params('mylib.Adam').lr = 1e-4      # now the default for omitted lr
+```
+
+Undo with `hp.restore(module)`, or scope it:
+
+```python
+with hp.instrumented(torch.optim):
+  ...
+```
+
 ## Callable schemas
 
 ```python

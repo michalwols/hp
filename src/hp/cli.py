@@ -76,7 +76,12 @@ def help_text(hp, program: str | None = None) -> str:
   return '\n'.join(lines)
 
 
-def parse(hp, args: list[str] | None = None):
+def parse(hp, args: list[str] | None = None, positionals: list[str] | None = None):
+  """Apply ``--flag value`` arguments to a params tree.
+
+  Positional arguments are not configuration, so they are collected into
+  ``positionals`` when given and otherwise ignored.
+  """
   args = list(sys.argv[1:] if args is None else args)
 
   aliases = {
@@ -93,7 +98,10 @@ def parse(hp, args: list[str] | None = None):
       print(help_text(hp))
       raise SystemExit(0)
     if not token.startswith('--'):
-      raise ValueError(f'unexpected argument: {token}')
+      if positionals is not None:
+        positionals.append(token)
+      index += 1
+      continue
     token = token[2:]
     if '=' in token:
       path, raw = token.split('=', 1)

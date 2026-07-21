@@ -66,6 +66,13 @@ from .fields import (
   Range,
   ValidationError,
 )
+from .adapt import (
+  construct,
+  from_argparse,
+  from_object,
+  to_argparse,
+)
+from .instrument import instrument, instrumented, restore
 from .registry import (
   Entry,
   calls,
@@ -74,8 +81,10 @@ from .registry import (
   parametrize,
   params,
   registry,
+  surface,
   track,
 )
+from .views import cli, env
 
 __all__ = [
   # types
@@ -137,7 +146,20 @@ __all__ = [
   'calls',
   'entry',
   'registry',
+  'surface',
   'clear',
+  # live views
+  'env',
+  'cli',
+  # interop
+  'from_object',
+  'construct',
+  'to_argparse',
+  'from_argparse',
+  # instrumentation
+  'instrument',
+  'instrumented',
+  'restore',
   # cli
   'help_text',
 ]

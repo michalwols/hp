@@ -713,21 +713,33 @@ class Params(metaclass=ParamsMeta):
   def _layered(cls, *sources: Any, separator: str = '__') -> 'Params':
     """Compose ordered sources, later ones winning.
 
-    Each source is a mapping, a config file path, or the string ``'env'`` or
-    ``'cli'``. Use :meth:`sources` afterwards to see which layer won a value.
+    Each source is a mapping, a config file path, ``hp.env`` / ``hp.cli``
+    (optionally called to narrow them), or the strings ``'env'`` / ``'cli'``.
+    Use :func:`hp.sources` afterwards to see which layer won a value.
 
-        params = TrainParams._layered('base.yaml', 'experiment.yaml', 'env', 'cli')
+        params = hp.layered(Config, 'base.yaml', hp.env(prefix='APP'), hp.cli)
     """
+    from .views import Cli, CliSource, Env, EnvSource
+
     hp = cls()
     for entry in sources:
-      prefix = ''
+      prefix, argv = '', None
       if isinstance(entry, tuple) and entry and entry[0] == 'env':
         entry, prefix = 'env', entry[1] if len(entry) > 1 else ''
+      elif isinstance(entry, EnvSource):
+        prefix, separator, entry = entry.prefix, entry.separator, 'env'
+      elif isinstance(entry, Env):
+        entry = 'env'
+      elif isinstance(entry, CliSource):
+        argv, entry = entry.argv, 'cli'
+      elif isinstance(entry, Cli):
+        entry = 'cli'
+
       if entry == 'env':
         hp._update(_nest(hp._env_updates(prefix, separator)), source='env')
       elif entry == 'cli':
         from .cli import parse
-        parse(hp, None)
+        parse(hp, argv)
       elif isinstance(entry, Mapping):
         hp._update(entry, source='mapping')
       else:
@@ -781,9 +793,10 @@ def schema(
   ``base`` selects the class to derive from, so schemas can inherit shared
   fields or opt into dynamic behavior.
   """
+  from .adapt import _named_tuple_fields
   from .callable import fields_from_callable
 
-  fields = fields_from_callable(target)
+  fields = _named_tuple_fields(target) or fields_from_callable(target)
   namespace: dict[str, Any] = {'__annotations__': {}}
   for field_name, field in fields.items():
     namespace['__annotations__'][field_name] = field.type or Any

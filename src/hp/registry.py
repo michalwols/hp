@@ -154,3 +154,26 @@ def track(target: Any = None, *, name: str | None = None):
     return wrapped
 
   return apply(target) if target is not None else apply
+
+
+def surface() -> dict[str, Any]:
+  """Everything hp knows about this process, in one place.
+
+  Registered targets with their params and call counts, plus the current
+  environment and command line.
+  """
+  from .core import to_dict
+  from .views import cli, env
+
+  return {
+    'targets': {
+      name: {
+        'mode': record.mode,
+        'params': to_dict(record.params),
+        'calls': len(record.calls),
+      }
+      for name, record in _REGISTRY.items()
+    },
+    'env': env.to_dict(),
+    'cli': cli.to_dict(),
+  }
