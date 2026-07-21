@@ -4,76 +4,90 @@ A small Python-native package for configuration, callable binding, nested parame
 
 ```python
 from typing import Literal
-from hp import HP, Choice, LogRange
+import hp
 
-class AdamWHP(HP):
+class AdamWParams(hp.Params):
   method: Literal['adamw'] = 'adamw'
-  lr: float = LogRange(1e-6, 1e-3, default=2e-4)
+  lr: float = hp.LogRange(1e-6, 1e-3, default=2e-4)
   weight_decay: float = 0.01
 
-class TrainHP(HP):
+class TrainParams(hp.Params):
   seed: int = 42
-  optimizer: AdamWHP = AdamWHP()
+  optimizer: AdamWParams = AdamWParams()
 
-p = TrainHP.from_command()
-p.freeze()
+params = TrainParams.from_command()
+params.freeze()
 ```
+
+`import hp` is all you need — everything hangs off the module.
 
 ## Nested and dynamic parameters
 
-Declared trees are strict:
+Declared trees are strict; unknown names are rejected:
 
 ```python
-p.optimizer.lr = 1e-4
-p['optimizer.lr'] = 5e-5
+params.optimizer.lr = 1e-4
+params['optimizer.lr'] = 5e-5
 ```
 
-Dynamic trees auto-vivify:
+`hp.Dynamic` drops the schema and auto-vivifies intermediate nodes:
 
 ```python
-p = HP.dynamic()
-p.opt.foo = 5
-p.rollout.temperature = 0.8
+config = hp.Dynamic()
+config.opt.foo = 5
+config.rollout.temperature = 0.8
 ```
+
+A declared class can opt into the same behavior:
+
+```python
+class OpenParams(hp.Params, dynamic=True):
+  seed: int = 42
+```
+
+## Command line
+
+```python
+params = TrainParams.from_command()                      # sys.argv
+params = TrainParams.from_command('--optimizer.lr 1e-4') # or a string / argv list
+```
+
+Dashed flags map onto underscore field paths, so `--weight-decay=0.1` and
+`--weight_decay=0.1` are equivalent. Booleans accept `--debug` and `--no-debug`.
 
 ## Bind, watch, and wrap
 
 ```python
-class Params(HP):
-  batch_size: int = 32
+params = TrainParams()
 
-p = Params()
+@params.bind
+def train(seed=8):
+  return seed
 
-@p.bind
-def train(batch_size=8):
-  return batch_size
-
-train()  # 32; explicit calls do not mutate p
+train()  # 42; explicit calls do not mutate params
 ```
 
 ```python
-@p.watch
-def train(batch_size=8):
-  return batch_size
+@params.watch
+def train(seed=8):
+  return seed
 
-train(batch_size=64)
-assert p.batch_size == 64
+train(seed=64)
+assert params.seed == 64
 ```
 
 ```python
-@p.wrap
-def train(batch_size=8):
-  return batch_size
+@params.wrap
+def train(seed=8):
+  return seed
 
-train()               # reads 64 from p
-train(batch_size=128) # updates p and calls with 128
+train()          # reads 64 from params
+train(seed=128)  # updates params and calls with 128
 ```
 
-Function-first usage:
+Function-first usage, where the schema comes from the signature:
 
 ```python
-import hp
-
 @hp.wrap
 def train(epochs: int = 10, lr: float = 2e-4):
   ...
@@ -87,20 +101,32 @@ train()
 ```python
 def train(epochs: int = 10, lr: float = 2e-4): ...
 
-TrainHP = HP.schema(train)
-p = TrainHP(lr=1e-4)
+TrainParams = hp.schema(train)
+params = TrainParams(lr=1e-4)
 ```
 
 ## Search spaces
 
 ```python
-class Params(HP):
-  lr: float = LogRange(1e-6, 1e-3, default=2e-4)
-  batch_size: int = Choice((2, 4, 8), default=4)
+class SearchParams(hp.Params):
+  lr: float = hp.LogRange(1e-6, 1e-3, default=2e-4)
+  batch_size: int = hp.Choice((2, 4, 8), default=4)
 
-p = Params()
-for candidate in p.samples(20, seed=1):
+params = SearchParams()
+for candidate in params.samples(20, seed=1):
   train(candidate)
 ```
 
 Optional Optuna integration is available in `hp.optimize.optuna`.
+
+## Run tooling
+
+```python
+params.stable_hash()        # content-addressed id for a config
+params.diff(other)          # {path: (mine, theirs)} for changed values
+params.fork(seed=7)         # copy with updates
+params.on_change(callback)  # (params, name, old, new) on every set
+params.save('config.yaml')  # json / yaml
+```
+
+`hp.Params` is the canonical base class; `hp.HP` and `hp.HyperParams` remain as aliases.

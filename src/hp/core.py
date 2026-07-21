@@ -16,8 +16,8 @@ from typing import Any, ClassVar, Literal, Union, get_args, get_origin, get_type
 from .fields import Choice, Field, MISSING, Range, ValidationError
 
 
-def _is_hp_type(value: Any) -> bool:
-  return isinstance(value, type) and issubclass(value, HP)
+def _is_params_type(value: Any) -> bool:
+  return isinstance(value, type) and issubclass(value, Params)
 
 
 def _literal_value(annotation: Any) -> Any:
@@ -28,18 +28,18 @@ def _literal_value(annotation: Any) -> Any:
   return MISSING
 
 
-def _hp_union_variants(annotation: Any) -> tuple[str, dict[Any, type['HP']]] | None:
+def _params_union_variants(annotation: Any) -> tuple[str, dict[Any, type['Params']]] | None:
   origin = get_origin(annotation)
   if origin not in (Union, types.UnionType):
     return None
   members = [x for x in get_args(annotation) if x is not type(None)]
-  if not members or not all(_is_hp_type(x) for x in members):
+  if not members or not all(_is_params_type(x) for x in members):
     return None
   common = set(members[0].__fields__)
   for member in members[1:]:
     common &= set(member.__fields__)
   for name in common:
-    variants: dict[Any, type[HP]] = {}
+    variants: dict[Any, type[Params]] = {}
     valid = True
     for member in members:
       tag = _literal_value(member.__fields__[name].type)
@@ -111,12 +111,12 @@ def _coerce_scalar(value: Any, annotation: Any) -> Any:
 def coerce(value: Any, annotation: Any, field: Field | None = None) -> Any:
   if value is MISSING:
     return value
-  if _is_hp_type(annotation):
+  if _is_params_type(annotation):
     if isinstance(value, annotation):
       return value
     if isinstance(value, Mapping):
       return annotation(**value)
-  variants = _hp_union_variants(annotation)
+  variants = _params_union_variants(annotation)
   if variants and isinstance(value, Mapping):
     discriminator, mapping = variants
     tag = value.get(discriminator)
@@ -136,13 +136,13 @@ def coerce(value: Any, annotation: Any, field: Field | None = None) -> Any:
       return tuple(coerce(item, args[0]) for item in values)
     return tuple(coerce(item, arg) for item, arg in zip(values, args))
   if isinstance(value, Mapping) and annotation in (None, Any, dict):
-    node = HP.dynamic()
+    node = Dynamic()
     node.update(value, strict=False)
     return node
   return _coerce_scalar(value, annotation)
 
 
-class HPMeta(ABCMeta):
+class ParamsMeta(ABCMeta):
   def __new__(mcls, name: str, bases: tuple[type, ...], namespace: dict[str, Any], **kwargs: Any):
     dynamic = kwargs.pop('dynamic', namespace.get('__dynamic__', False))
     fields: OrderedDict[str, Field] = OrderedDict()
@@ -174,8 +174,8 @@ class HPMeta(ABCMeta):
         if field.type is None:
           field.type = annotation
       else:
-        required = raw is MISSING and not _is_hp_type(annotation)
-        default = annotation() if raw is MISSING and _is_hp_type(annotation) else raw
+        required = raw is MISSING and not _is_params_type(annotation)
+        default = annotation() if raw is MISSING and _is_params_type(annotation) else raw
         field = Field(default=default, type=annotation, required=required)
       field.name = field_name
       fields[field_name] = field
@@ -197,7 +197,7 @@ class HPMeta(ABCMeta):
     return super().__new__(mcls, name, bases, namespace)
 
 
-class HP(MutableMapping[str, Any], metaclass=HPMeta):
+class Params(MutableMapping[str, Any], metaclass=ParamsMeta):
   __fields__: ClassVar[OrderedDict[str, Field]]
   __dynamic__: ClassVar[bool] = False
 
@@ -214,11 +214,6 @@ class HP(MutableMapping[str, Any], metaclass=HPMeta):
       self.update(mapping, strict=True)
     self.update(values, strict=True)
 
-  @classmethod
-  def dynamic(cls, **values: Any) -> 'HP':
-    dynamic_type = type('DynamicHP', (cls,), {'__dynamic__': True})
-    return dynamic_type(**values)
-
   @property
   def fields(self) -> OrderedDict[str, Field]:
     fields = OrderedDict((k, v) for k, v in self.__class__.__fields__.items())
@@ -228,8 +223,8 @@ class HP(MutableMapping[str, Any], metaclass=HPMeta):
   def __getattr__(self, name: str) -> Any:
     if name.startswith('_') or not self.__dynamic__:
       raise AttributeError(name)
-    child = HP.dynamic()
-    field = Field(default=child, type=HP, name=name)
+    child = Dynamic()
+    field = Field(default=child, type=Params, name=name)
     self._fields[name] = field
     object.__setattr__(self, name, child)
     return child
@@ -245,8 +240,8 @@ class HP(MutableMapping[str, Any], metaclass=HPMeta):
       if not self.__dynamic__:
         object.__setattr__(self, name, value)
         return
-      if isinstance(value, Mapping) and not isinstance(value, HP):
-        node = HP.dynamic()
+      if isinstance(value, Mapping) and not isinstance(value, Params):
+        node = Dynamic()
         node.update(value, strict=False)
         value = node
       field = Field(default=copy.deepcopy(value), type=type(value), name=name)
@@ -282,23 +277,23 @@ class HP(MutableMapping[str, Any], metaclass=HPMeta):
   def __len__(self) -> int:
     return len(self.fields)
 
-  def _path(self, path: str, create: bool = False) -> tuple['HP', str]:
+  def _path(self, path: str, create: bool = False) -> tuple['Params', str]:
     parts = path.split('.')
-    node: HP = self
+    node: Params = self
     for part in parts[:-1]:
       try:
         child = getattr(node, part)
       except AttributeError:
         if not create:
           raise KeyError(path) from None
-        child = HP.dynamic()
+        child = Dynamic()
         if not node.__dynamic__:
-          node._fields[part] = Field(default=child, type=HP, name=part)
+          node._fields[part] = Field(default=child, type=Params, name=part)
           object.__setattr__(node, part, child)
         else:
           setattr(node, part, child)
-      if not isinstance(child, HP):
-        raise KeyError(f'{part!r} in {path!r} is not an HP node')
+      if not isinstance(child, Params):
+        raise KeyError(f'{part!r} in {path!r} is not a Params node')
       node = child
     return node, parts[-1]
 
@@ -318,7 +313,7 @@ class HP(MutableMapping[str, Any], metaclass=HPMeta):
     *,
     strict: bool = False,
     **values: Any,
-  ) -> 'HP':
+  ) -> 'Params':
     incoming = dict(other or {})
     incoming.update(values)
     for key, value in incoming.items():
@@ -333,22 +328,22 @@ class HP(MutableMapping[str, Any], metaclass=HPMeta):
       current = getattr(self, key, MISSING)
       field = self.fields[key]
       if (
-        isinstance(current, HP)
+        isinstance(current, Params)
         and isinstance(value, Mapping)
-        and _hp_union_variants(field.type) is None
+        and _params_union_variants(field.type) is None
       ):
         current.update(value, strict=strict)
       else:
         setattr(self, key, value)
     return self
 
-  def validate(self, recursive: bool = True) -> 'HP':
+  def validate(self, recursive: bool = True) -> 'Params':
     for name, field in self.fields.items():
       value = getattr(self, name, MISSING)
       field.validate(value)
       if value is not MISSING and field.type is not None and not _matches_type(value, field.type):
         raise ValidationError(f'{name} expected {field.type!r}, got {type(value)!r}')
-      if recursive and isinstance(value, HP):
+      if recursive and isinstance(value, Params):
         value.validate()
     return self
 
@@ -360,10 +355,10 @@ class HP(MutableMapping[str, Any], metaclass=HPMeta):
       value = getattr(self, name, MISSING)
       if value is MISSING:
         continue
-      if isinstance(value, HP):
+      if isinstance(value, Params):
         value = value.to_dict(secrets=secrets)
       elif isinstance(value, list):
-        value = [v.to_dict(secrets=secrets) if isinstance(v, HP) else v for v in value]
+        value = [v.to_dict(secrets=secrets) if isinstance(v, Params) else v for v in value]
       result[name] = copy.deepcopy(value)
     return result
 
@@ -371,31 +366,31 @@ class HP(MutableMapping[str, Any], metaclass=HPMeta):
     output: dict[str, Any] = {}
     for name, value in self.items():
       path = f'{prefix}.{name}' if prefix else name
-      if isinstance(value, HP):
+      if isinstance(value, Params):
         output.update(value.flatten(path))
       else:
         output[path] = value
     return output
 
-  def fork(self, **updates: Any) -> 'HP':
+  def fork(self, **updates: Any) -> 'Params':
     clone = copy.deepcopy(self)
     object.__setattr__(clone, '_frozen', False)
     clone.update(updates, strict=True)
     return clone
 
-  def freeze(self, recursive: bool = True) -> 'HP':
+  def freeze(self, recursive: bool = True) -> 'Params':
     if recursive:
       for value in self.values():
-        if isinstance(value, HP):
+        if isinstance(value, Params):
           value.freeze()
     object.__setattr__(self, '_frozen', True)
     return self
 
-  def unfreeze(self, recursive: bool = True) -> 'HP':
+  def unfreeze(self, recursive: bool = True) -> 'Params':
     object.__setattr__(self, '_frozen', False)
     if recursive:
       for value in self.values():
-        if isinstance(value, HP):
+        if isinstance(value, Params):
           value.unfreeze()
     return self
 
@@ -403,9 +398,9 @@ class HP(MutableMapping[str, Any], metaclass=HPMeta):
     payload = json.dumps(self.to_dict(secrets=True), sort_keys=True, separators=(',', ':'), default=str)
     return hashlib.sha256(payload.encode()).hexdigest()[:length]
 
-  def diff(self, other: 'HP | Mapping[str, Any]') -> dict[str, tuple[Any, Any]]:
+  def diff(self, other: 'Params | Mapping[str, Any]') -> dict[str, tuple[Any, Any]]:
     left = self.flatten()
-    right = other.flatten() if isinstance(other, HP) else HP.dynamic(**other).flatten()
+    right = other.flatten() if isinstance(other, Params) else Dynamic(**other).flatten()
     return {
       key: (left.get(key, MISSING), right.get(key, MISSING))
       for key in left.keys() | right.keys()
@@ -421,13 +416,13 @@ class HP(MutableMapping[str, Any], metaclass=HPMeta):
     for name, field in self.fields.items():
       path = f'{prefix}.{name}' if prefix else name
       value = getattr(self, name, MISSING)
-      if isinstance(value, HP):
+      if isinstance(value, Params):
         output.update(value.space(path))
       elif field.searchable:
         output[path] = field
     return output
 
-  def sample(self, seed: int | None = None) -> 'HP':
+  def sample(self, seed: int | None = None) -> 'Params':
     import random
     rng = random.Random(seed)
     clone = self.fork()
@@ -435,7 +430,7 @@ class HP(MutableMapping[str, Any], metaclass=HPMeta):
       clone[path] = field.sample(rng)
     return clone
 
-  def samples(self, count: int, seed: int | None = None) -> Iterator['HP']:
+  def samples(self, count: int, seed: int | None = None) -> Iterator['Params']:
     import random
     rng = random.Random(seed)
     for _ in range(count):
@@ -444,7 +439,7 @@ class HP(MutableMapping[str, Any], metaclass=HPMeta):
         clone[path] = field.sample(rng)
       yield clone
 
-  def grid(self) -> Iterator['HP']:
+  def grid(self) -> Iterator['Params']:
     space = self.space()
     paths = tuple(space)
     for values in product(*(tuple(space[path].grid()) for path in paths)):
@@ -454,16 +449,16 @@ class HP(MutableMapping[str, Any], metaclass=HPMeta):
       yield clone
 
   @classmethod
-  def schema(cls, target: Any, *, name: str | None = None) -> type['HP']:
+  def schema(cls, target: Any, *, name: str | None = None) -> type['Params']:
     from .callable import fields_from_callable
     fields = fields_from_callable(target)
     namespace: dict[str, Any] = {'__annotations__': {}}
     for field_name, field in fields.items():
       namespace['__annotations__'][field_name] = field.type or Any
       namespace[field_name] = field
-    return HPMeta(name or f'{getattr(target, "__name__", "Callable").title()}HP', (cls,), namespace)
+    return ParamsMeta(name or f'{getattr(target, "__name__", "Callable").title()}Params', (cls,), namespace)
 
-  def define(self, target: Any, *, mapping: Mapping[str, str] | None = None) -> 'HP':
+  def define(self, target: Any, *, mapping: Mapping[str, str] | None = None) -> 'Params':
     from .callable import fields_from_callable
     fields = fields_from_callable(target)
     mapping = mapping or {}
@@ -491,7 +486,7 @@ class HP(MutableMapping[str, Any], metaclass=HPMeta):
     return decorate(self, target, mode='wrap', **kwargs)
 
   @classmethod
-  def from_env(cls, prefix: str = '', *, separator: str = '__') -> 'HP':
+  def from_env(cls, prefix: str = '', *, separator: str = '__') -> 'Params':
     hp = cls()
     for key, value in os.environ.items():
       if not key.startswith(prefix):
@@ -504,7 +499,7 @@ class HP(MutableMapping[str, Any], metaclass=HPMeta):
     return hp
 
   @classmethod
-  def from_command(cls, args: str | list[str] | None = None) -> 'HP':
+  def from_command(cls, args: str | list[str] | None = None) -> 'Params':
     from .cli import parse
     if isinstance(args, str):
       import shlex
@@ -515,7 +510,7 @@ class HP(MutableMapping[str, Any], metaclass=HPMeta):
   from_cli = from_command
 
   @classmethod
-  def load(cls, path: str | Path) -> 'HP':
+  def load(cls, path: str | Path) -> 'Params':
     from .io import load
     return cls(**load(path))
 
@@ -526,3 +521,16 @@ class HP(MutableMapping[str, Any], metaclass=HPMeta):
   def __repr__(self) -> str:
     body = ', '.join(f'{k}={v!r}' for k, v in self.items())
     return f'{type(self).__name__}({body})'
+
+
+class Dynamic(Params, dynamic=True):
+  """Schemaless params tree: unknown names become fields on assignment.
+
+  Nested nodes auto-vivify, so intermediate levels need no declaration::
+
+      config = Dynamic()
+      config.rollout.temperature = 0.8
+
+  Declared classes can opt into the same behavior with
+  ``class Config(Params, dynamic=True)``.
+  """
