@@ -25,6 +25,7 @@ approach against the alternatives.
 | `08_priors_and_references.py` | sketch | mining cases, oracles, validators and priors out of logs, test suites and the current system |
 | `09_multilog.py` | sketch | hp as the config layer under a columnar tracking tool (parquet / lance / duckdb) |
 | `10_image_generation.py` | sketch | end-to-end: cheap verifiers screening, human pairwise deciding, and the reward-hacking defences |
+| `11_execution.py` | sketch | batch rollouts, async, active selection, and why resume is structural rather than a feature |
 
 ## The question these are exploring
 
@@ -55,6 +56,10 @@ Reading the trade-offs across these files, the same split keeps appearing:
   correctness to parity with what already ships turns an unmeasurable goal into
   a measurable one — but it caps quality at parity, so it is a safety rail
   rather than the thing being improved.
+- **Human feedback is out of band, and that is structural.** You cannot await a
+  person inside a loop, so a study cannot live in a process, so storage is the
+  source of truth and resume is replay. Batch and async are optimizations;
+  durability is a consequence of the problem.
 - **Paired feedback needs its own channel**, because reducing it to a win rate
   against a baseline throws away most of the signal — and because it breaks the
   assumption that a finished trial has a final score.
