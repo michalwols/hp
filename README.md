@@ -15,7 +15,7 @@ class TrainParams(hp.Params):
   seed: int = 42
   optimizer: AdamWParams = AdamWParams()
 
-params = hp.from_command(TrainParams)
+params = hp.load(TrainParams, hp.cli)
 hp.freeze(params)
 ```
 
@@ -36,7 +36,6 @@ class TrainParams(hp.Params):
 hp.to_dict(params)
 hp.fork(params, seed=7)
 hp.space(params)
-hp.from_command(TrainParams)
 ```
 
 `hp.Params` intentionally has an empty public namespace. Attribute access
@@ -127,11 +126,26 @@ Flags are applied together rather than one at a time, so the result does not dep
 on their order. Values you set explicitly carry across a switch; the outgoing
 variant's own defaults do not.
 
+## Loading
+
+One verb builds params from anything, and extra arguments are layers applied in
+order:
+
+```python
+hp.load(Config)                              # defaults
+hp.load(Config, 'base.yaml', 'exp.yaml')     # layered files
+hp.load(Config, hp.env(prefix='APP'), hp.cli)  # env then command line
+hp.load('config.yaml')                       # a bare file
+hp.load(Cfg(lr=0.5))                         # a dataclass / attrs / pydantic object
+hp.load(arg_parser)                          # an argparse parser
+hp.load({'lr': 0.5})                         # a mapping
+```
+
 ## Command line
 
 ```python
-params = hp.from_command(TrainParams)                      # sys.argv
-params = hp.from_command(TrainParams, '--optimizer.lr 1e-4') # or a string / argv list
+params = hp.load(Config, hp.cli)                    # sys.argv
+params = hp.load(Config, hp.cli('--optim.lr 1e-4')) # or a string / argv list
 ```
 
 Dashed flags map onto underscore field paths, so `--weight-decay=0.1` and
@@ -217,88 +231,33 @@ evaluate(threshold=0.7)
 hp.calls(evaluate)   # [{'threshold': 0.7}]
 ```
 
-Both register under a name, so the whole program's configuration surface is
-reachable from one place:
+`hp.params` is one object doing the work of a registry, a decorator and an
+instrumenter, dispatching on what you give it:
 
 ```python
-hp.registry()        # {'train': Entry(...), 'evaluate': Entry(...)}
-hp.params('train')   # by name as well as by reference
+hp.params(fn)          # decorate and register
+hp.params(decorated)   # the params of something registered
+hp.params('train')     # the same, by name
+hp.params(module)      # instrument a module, returning a restore handle
+hp.params()            # the whole registry
+hp.params.calls(fn)    # recorded calls
+hp.params.surface()    # registry + environment + command line
 ```
 
-## Environment and command line
+## Scoped overrides
 
-`hp.env` and `hp.cli` are live views, not snapshots. Assigning to `hp.env` writes
-through to `os.environ`, so subprocesses and later imports see it:
+Overrides apply to a *fork*, held in a `ContextVar`, so nothing shared is
+mutated and threads and async tasks never see each other's values:
 
 ```python
-hp.env.CUDA_VISIBLE_DEVICES = '0'
-hp.env['HF_HOME']                    # reads os.environ
-
-hp.cli.optim.lr                      # parsed --optim.lr
-hp.cli.args                          # positional arguments
+with hp.override(train, lr=1e-4):
+  train()        # sees lr=1e-4
+train()          # back to the registered value
 ```
 
-Both also serve as layers, replacing the `'env'` / `'cli'` strings:
-
-```python
-params = hp.layered(Config, 'base.yaml', hp.env(prefix='APP'), hp.cli)
-```
-
-`hp.surface()` returns everything hp knows about the process at once —
-registered targets with their params and call counts, plus the environment and
-command line.
-
-## Interop
-
-Other config shapes are recognized structurally, so none of these libraries need
-to be installed:
-
-```python
-@dataclasses.dataclass
-class Cfg:
-  lr: float = 1e-3
-
-params = hp.from_object(Cfg(lr=0.5))   # also attrs, pydantic, NamedTuple,
-                                       # argparse.Namespace, mappings, params
-hp.construct(params, Cfg)              # -> Cfg(lr=0.5)
-```
-
-`hp.construct` passes only what the target's signature accepts, so extra fields
-are dropped rather than raising.
-
-For codebases that already parse with argparse:
-
-```python
-parser = hp.to_argparse(params)        # flags, types, choices, defaults, --no-x
-params = hp.from_argparse(parser)      # the other direction
-```
-
-## Instrumenting a module
-
-Wrap every callable in a module to record what it is called with:
-
-```python
-hp.instrument(torch.optim)
-Adam(model.parameters(), lr=3e-4)
-hp.calls('torch.optim.Adam')      # [{'lr': 0.0003, ...}]
-```
-
-Classes keep their identity — `__init__` is wrapped rather than the class
-replaced — so `isinstance` and subclassing are unaffected. `select=` and
-`exclude=` narrow what gets wrapped, and `override=True` additionally lets
-explicitly-set params supply arguments the caller omitted:
-
-```python
-hp.instrument(mylib, select=['Adam'], override=True)
-hp.params('mylib.Adam').lr = 1e-4      # now the default for omitted lr
-```
-
-Undo with `hp.restore(module)`, or scope it:
-
-```python
-with hp.instrumented(torch.optim):
-  ...
-```
+`hp.scope(params)` makes a params object the ambient configuration, readable
+anywhere via `hp.active()`; `hp.override(**values)` with no target forks
+whatever is currently scoped.
 
 ## Callable schemas
 

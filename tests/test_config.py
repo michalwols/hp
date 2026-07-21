@@ -26,20 +26,20 @@ class Cfg(hp.Params):
 
 
 def test_cli_switches_union_variant():
-  cfg = hp.from_command(Cfg, ['--optimizer.name', 'sgd', '--optimizer.momentum', '0.8'])
+  cfg = hp.load(Cfg, hp.cli(['--optimizer.name', 'sgd', '--optimizer.momentum', '0.8']))
   assert isinstance(cfg.optimizer, SGD)
   assert cfg.optimizer.momentum == 0.8
   assert cfg.optimizer.lr == 1e-2  # SGD's default, not AdamW's
 
 
 def test_union_switch_is_order_independent():
-  first = hp.from_command(Cfg, ['--optimizer.name', 'sgd', '--optimizer.momentum', '0.8'])
-  second = hp.from_command(Cfg, ['--optimizer.momentum', '0.8', '--optimizer.name', 'sgd'])
+  first = hp.load(Cfg, hp.cli(['--optimizer.name', 'sgd', '--optimizer.momentum', '0.8']))
+  second = hp.load(Cfg, hp.cli(['--optimizer.momentum', '0.8', '--optimizer.name', 'sgd']))
   assert hp.to_dict(first) == hp.to_dict(second)
 
 
 def test_union_survives_a_round_trip(tmp_path):
-  cfg = hp.from_command(Cfg, ['--optimizer.name', 'sgd'])
+  cfg = hp.load(Cfg, hp.cli(['--optimizer.name', 'sgd']))
   path = tmp_path / 'c.json'
   hp.save(cfg, path)
   reloaded = hp.load(Cfg, path)
@@ -48,7 +48,7 @@ def test_union_survives_a_round_trip(tmp_path):
 
 
 def test_explicit_values_carry_across_a_variant_switch():
-  cfg = hp.from_command(Cfg, ['--optimizer.lr', '5e-4', '--optimizer.name', 'sgd'])
+  cfg = hp.load(Cfg, hp.cli(['--optimizer.lr', '5e-4', '--optimizer.name', 'sgd']))
   assert isinstance(cfg.optimizer, SGD)
   assert cfg.optimizer.lr == 5e-4
 
@@ -70,7 +70,7 @@ def test_partial_update_merges_into_current_variant():
 def test_env_reads_nested_paths_and_ignores_ambient(monkeypatch):
   monkeypatch.setenv('APP__OPTIMIZER__LR', '0.5')
   monkeypatch.setenv('SOMETHING_UNRELATED', 'x')
-  cfg = hp.from_env(Cfg, 'APP')
+  cfg = hp.load(Cfg, hp.env('APP'))
   assert cfg.optimizer.lr == 0.5
   assert 'something_unrelated' not in hp.to_dict(cfg)
 
@@ -80,11 +80,11 @@ def test_env_honors_explicit_field_env(monkeypatch):
     token: str = hp.Field(default='', env='SERVICE_TOKEN')
 
   monkeypatch.setenv('SERVICE_TOKEN', 'abc')
-  assert hp.from_env(Svc).token == 'abc'
+  assert hp.load(Svc, hp.env).token == 'abc'
 
 
 def test_provenance_records_the_winning_layer():
-  cfg = hp.from_command(Cfg, ['--optimizer.name', 'sgd'])
+  cfg = hp.load(Cfg, hp.cli(['--optimizer.name', 'sgd']))
   assert hp.source(cfg, 'optimizer.name') == 'cli'
   assert hp.source(cfg, 'seed') == 'default'
   assert hp.sources(cfg)['optimizer.lr'] == 'default'
@@ -95,7 +95,7 @@ def test_layered_composition_later_wins(tmp_path, monkeypatch):
   base.write_text('{"seed": 7}')
   monkeypatch.setenv('L__OPTIMIZER__LR', '0.3')
 
-  cfg = hp.layered(Cfg, base, ('env', 'L'))
+  cfg = hp.load(Cfg, base, ('env', 'L'))
   assert cfg.seed == 7
   assert cfg.optimizer.lr == 0.3
   assert hp.source(cfg, 'seed') == str(base)
@@ -106,7 +106,7 @@ def test_alias_resolves_on_cli_and_update():
   class P(hp.Params):
     weight_decay: float = hp.Field(default=0.01, alias='wd')
 
-  assert hp.from_command(P, ['--wd', '0.5']).weight_decay == 0.5
+  assert hp.load(P, hp.cli(['--wd', '0.5'])).weight_decay == 0.5
   assert hp.update(P(), {'wd': 0.2}).weight_decay == 0.2
 
 
@@ -116,7 +116,7 @@ def test_help_lists_fields_and_exits(capsys):
     token: str = hp.Field(default='shh', secret=True)
 
   with pytest.raises(SystemExit) as excinfo:
-    hp.from_command(P, ['--help'])
+    hp.load(P, hp.cli(['--help']))
   assert excinfo.value.code == 0
 
   out = capsys.readouterr().out
@@ -169,7 +169,7 @@ def test_params_are_hashable():
 def test_unknown_flag_still_warns_after_union_resolution():
   with warnings.catch_warnings(record=True) as caught:
     warnings.simplefilter('always')
-    hp.from_command(Cfg, ['--optimizer.name', 'sgd', '--optimizer.nope', '1'])
+    hp.load(Cfg, hp.cli(['--optimizer.name', 'sgd', '--optimizer.nope', '1']))
   assert any(issubclass(w.category, hp.UnknownParam) for w in caught)
 
 

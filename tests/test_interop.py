@@ -13,10 +13,10 @@ import hp
 
 @pytest.fixture(autouse=True)
 def clean():
-  hp.clear()
+  hp.params.clear()
   hp.cli.reset()
   yield
-  hp.clear()
+  hp.params.clear()
   hp.cli.reset()
 
 
@@ -38,7 +38,7 @@ def test_env_is_a_layer(monkeypatch):
     seed: int = 1
 
   monkeypatch.setenv('APP__SEED', '7')
-  params = hp.layered(Config, hp.env(prefix='APP'))
+  params = hp.load(Config, hp.env(prefix='APP'))
   assert params.seed == 7
   assert hp.source(params, 'seed') == 'env'
 
@@ -47,7 +47,7 @@ def test_cli_is_a_layer_and_a_view(monkeypatch):
   class Config(hp.Params):
     seed: int = 1
 
-  params = hp.layered(Config, hp.cli(['--seed', '9']))
+  params = hp.load(Config, hp.cli(['--seed', '9']))
   assert params.seed == 9
 
   monkeypatch.setattr('sys.argv', ['prog', '--seed', '5'])
@@ -64,7 +64,7 @@ class DataCfg:
 
 
 def test_dataclass_round_trip():
-  params = hp.from_object(DataCfg(lr=0.5))
+  params = hp.load(DataCfg(lr=0.5))
   assert hp.to_dict(params) == {'lr': 0.5, 'name': 'x'}
   assert hp.construct(params, DataCfg) == DataCfg(lr=0.5, name='x')
 
@@ -78,13 +78,13 @@ def test_namedtuple_schema():
 
 
 def test_namespace_and_mapping():
-  assert hp.to_dict(hp.from_object(argparse.Namespace(seed=3))) == {'seed': 3}
-  assert hp.to_dict(hp.from_object({'a': 1})) == {'a': 1}
+  assert hp.to_dict(hp.load(argparse.Namespace(seed=3))) == {'seed': 3}
+  assert hp.to_dict(hp.load({'a': 1})) == {'a': 1}
 
 
 def test_from_object_rejects_unreadable():
   with pytest.raises(TypeError):
-    hp.from_object(42)
+    hp.load(42)
 
 
 def test_to_argparse_round_trips():
@@ -128,50 +128,50 @@ def fake_module():
 def test_instrument_records_calls_and_restores():
   module, build, Model = fake_module()
 
-  with hp.instrumented(module) as handle:
+  with hp.params.instrumented(module) as handle:
     module.build(width=4)
     instance = module.Model(hidden=32)
 
     assert sorted(handle.names) == ['fakelib.Model', 'fakelib.build']
-    assert hp.calls('fakelib.build') == [{'width': 4}]
-    assert hp.calls('fakelib.Model') == [{'hidden': 32}]  # no self
+    assert hp.params.calls('fakelib.build') == [{'width': 4}]
+    assert hp.params.calls('fakelib.Model') == [{'hidden': 32}]  # no self
     assert isinstance(instance, Model)
 
   assert module.build is build
-  assert list(hp.registry()) == []
+  assert list(hp.params.registry) == []
 
 
 def test_instrument_select_and_override():
   module, build, _ = fake_module()
 
-  hp.instrument(module, select=['build'], override=True)
-  assert 'fakelib.Model' not in hp.registry()
+  hp.params(module, select=['build'], override=True)
+  assert 'fakelib.Model' not in hp.params.registry
 
   hp.params('fakelib.build').width = 100
   assert module.build() == 200  # width overridden, depth default
   assert module.build(width=2) == 4  # explicit still wins
 
-  hp.restore(module)
+  hp.params.restore(module)
   assert module.build() == 16
 
 
 def test_instrumenting_twice_raises():
   module, _, _ = fake_module()
-  hp.instrument(module)
+  hp.params(module)
   try:
     with pytest.raises(RuntimeError, match='already instrumented'):
-      hp.instrument(module)
+      hp.params(module)
   finally:
-    hp.restore(module)
+    hp.params.restore(module)
 
 
 def test_surface_reports_everything():
-  @hp.parametrize(name='train')
+  @hp.params(name='train')
   def train(epochs: int = 3):
     return epochs
 
   train()
-  report = hp.surface()
+  report = hp.params.surface()
   assert report['targets']['train']['params'] == {'epochs': 3}
   assert 'env' in report and 'cli' in report
 
@@ -187,4 +187,4 @@ def test_from_command_ignores_positionals():
   class Config(hp.Params):
     seed: int = 1
 
-  assert hp.from_command(Config, ['input.txt', '--seed', '4']).seed == 4
+  assert hp.load(Config, hp.cli(['input.txt', '--seed', '4'])).seed == 4

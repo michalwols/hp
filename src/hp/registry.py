@@ -20,6 +20,7 @@ from __future__ import annotations
 import functools
 from collections import OrderedDict
 from dataclasses import dataclass, field
+import types
 from typing import Any
 
 from .callable import _signature
@@ -76,11 +77,6 @@ def entry(target: Any) -> Entry:
   raise KeyError(f'{target!r} is not registered; decorate it with hp.parametrize or hp.track')
 
 
-def params(target: Any) -> Params:
-  """The params for a registered target."""
-  return entry(target).params
-
-
 def calls(target: Any) -> list[dict[str, Any]]:
   """The recorded call arguments for a tracked target."""
   return entry(target).calls
@@ -113,6 +109,9 @@ def parametrize(
 
     @functools.wraps(target)
     def wrapped(*args: Any, **kwargs: Any):
+      from .context import resolve
+
+      schema_params = resolve(record_entry.name, record_entry.params)
       bound = signature.bind_partial(*args, **kwargs)
       for argument in schema_params._field_map:
         if argument in bound.arguments:
@@ -177,3 +176,110 @@ def surface() -> dict[str, Any]:
     'env': env.to_dict(),
     'cli': cli.to_dict(),
   }
+
+
+class ParamsAPI:
+  """The registry, the decorator, and the instrumenter in one object.
+
+  What it does depends on what you hand it:
+
+  ==========================  ==================================================
+  ``hp.params()``             the whole registry, name -> Entry
+  ``hp.params(fn)``           decorate and register (see :func:`parametrize`)
+  ``hp.params(decorated)``    the params of something already registered
+  ``hp.params('name')``       the same, by registry name
+  ``hp.params(module)``       instrument a module, returning a restore handle
+  ``hp.params(params_obj)``   returned unchanged, so it is safe to call twice
+  ==========================  ==================================================
+  """
+
+  def __call__(self, target: Any = None, /, **kwargs: Any) -> Any:
+    if target is None:
+      # used as a decorator factory: @hp.params(name='train')
+      if kwargs:
+        return lambda inner: self(inner, **kwargs)
+      return _REGISTRY
+
+    if isinstance(target, Params):
+      return target
+
+    if isinstance(target, str):
+      return entry(target).params
+
+    if isinstance(target, types.ModuleType):
+      from .instrument import instrument
+
+      return instrument(target, **kwargs)
+
+    # already registered, by reference or through its wrapper
+    try:
+      return entry(target).params
+    except KeyError:
+      pass
+
+    if callable(target):
+      return parametrize(target, **kwargs)
+
+    from .adapt import from_object
+
+    return from_object(target, **kwargs)
+
+  # -- registry ------------------------------------------------------------
+
+  def __getitem__(self, name: str) -> Entry:
+    return entry(name)
+
+  def __contains__(self, target: Any) -> bool:
+    try:
+      entry(target)
+    except KeyError:
+      return False
+    return True
+
+  def __iter__(self):
+    return iter(_REGISTRY)
+
+  def __len__(self) -> int:
+    return len(_REGISTRY)
+
+  @property
+  def registry(self) -> OrderedDict[str, Entry]:
+    return _REGISTRY
+
+  def entry(self, target: Any) -> Entry:
+    return entry(target)
+
+  def calls(self, target: Any) -> list[dict[str, Any]]:
+    return entry(target).calls
+
+  def clear(self) -> None:
+    _REGISTRY.clear()
+
+  def surface(self) -> dict[str, Any]:
+    return surface()
+
+  # -- decorators ----------------------------------------------------------
+
+  def track(self, target: Any = None, **kwargs: Any) -> Any:
+    return track(target, **kwargs)
+
+  def wrap(self, target: Any = None, **kwargs: Any) -> Any:
+    return parametrize(target, **kwargs)
+
+  # -- instrumentation -----------------------------------------------------
+
+  def instrumented(self, module: Any, **kwargs: Any):
+    from .instrument import instrumented
+
+    return instrumented(module, **kwargs)
+
+  def restore(self, module: Any) -> None:
+    from .instrument import restore
+
+    restore(module)
+
+  def __repr__(self) -> str:
+    return f'<hp.params: {len(_REGISTRY)} registered>'
+
+
+params = ParamsAPI()

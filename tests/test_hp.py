@@ -101,9 +101,9 @@ def test_update_can_still_be_strict():
 
 
 def test_parametrize_fills_and_records_arguments():
-  hp.clear()
+  hp.params.clear()
 
-  @hp.parametrize
+  @hp.params
   def train(epochs: int = 10, lr: float = 2e-4):
     return epochs, lr
 
@@ -114,7 +114,7 @@ def test_parametrize_fills_and_records_arguments():
 
 
 def test_track_records_without_changing_behavior():
-  hp.clear()
+  hp.params.clear()
 
   @hp.track
   def train(epochs: int = 10, lr: float = 2e-4):
@@ -123,14 +123,14 @@ def test_track_records_without_changing_behavior():
   assert train(lr=1e-3) == (10, 1e-3)
   assert train(5) == (5, 2e-4)          # defaults untouched by params
 
-  assert hp.calls(train) == [{'lr': 1e-3}, {'epochs': 5}]
+  assert hp.params.calls(train) == [{'lr': 1e-3}, {'epochs': 5}]
   assert hp.params(train).lr == 2e-4    # never mutated
 
 
 def test_registry_collects_targets():
-  hp.clear()
+  hp.params.clear()
 
-  @hp.parametrize(name='alpha')
+  @hp.params(name='alpha')
   def alpha(a: int = 1):
     return a
 
@@ -138,9 +138,9 @@ def test_registry_collects_targets():
   def beta(b: int = 2):
     return b
 
-  assert list(hp.registry()) == ['alpha', 'custom']
-  assert hp.entry('custom').target is beta.__wrapped__
-  assert hp.registry()['alpha'].mode == 'parametrize'
+  assert list(hp.params.registry) == ['alpha', 'custom']
+  assert hp.params.entry('custom').target is beta.__wrapped__
+  assert hp.params.registry['alpha'].mode == 'parametrize'
 
 
 def test_schema_from_callable():
@@ -154,9 +154,9 @@ def test_schema_from_callable():
 
 
 def test_parametrize_exposes_params_on_the_target():
-  hp.clear()
+  hp.params.clear()
 
-  @hp.parametrize
+  @hp.params
   def train(epochs: int = 10):
     return epochs
 

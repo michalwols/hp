@@ -30,7 +30,11 @@ class EnvSource:
 class CliSource:
   """A command line layer over an explicit argv."""
 
-  def __init__(self, argv: list[str] | None = None):
+  def __init__(self, argv: str | list[str] | None = None):
+    if isinstance(argv, str):
+      import shlex
+
+      argv = shlex.split(argv)
     self.argv = argv
 
   def __repr__(self) -> str:
@@ -107,7 +111,7 @@ class Cli:
     object.__setattr__(self, '_parsed', None)
     object.__setattr__(self, '_args', [])
 
-  def __call__(self, argv: list[str] | None = None) -> CliSource:
+  def __call__(self, argv: str | list[str] | None = None) -> CliSource:
     return CliSource(argv)
 
   @property

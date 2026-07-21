@@ -12,7 +12,7 @@ class TrainParams(hp.Params):
 
 
 def test_cli():
-  p = hp.from_command(TrainParams, ['--optim.lr', '0.001', '--debug'])
+  p = hp.load(TrainParams, hp.cli(['--optim.lr', '0.001', '--debug']))
   assert p.optim.lr == 0.001
   assert p.debug is True
 
@@ -25,11 +25,11 @@ def test_json_round_trip(tmp_path):
 
 
 def test_from_command_string_and_dashes():
-  p = hp.from_command(TrainParams, '--optim.lr 0.001 --debug')
+  p = hp.load(TrainParams, hp.cli('--optim.lr 0.001 --debug'))
   assert p.optim.lr == 0.001
   assert p.debug is True
 
-  p = hp.from_command(TrainParams, ['--optim.weight-decay=0.1'])
+  p = hp.load(TrainParams, hp.cli(['--optim.weight-decay=0.1']))
   assert p.optim.weight_decay == 0.1
 
 
@@ -37,7 +37,7 @@ def test_unknown_flag_warns_but_is_kept():
   import pytest
 
   with pytest.warns(hp.UnknownParam):
-    p = hp.from_command(TrainParams, ['--lr', '0.5'])
+    p = hp.load(TrainParams, hp.cli(['--lr', '0.5']))
 
   assert p.lr == 0.5
   assert p.optim.lr == 2e-4  # the declared field is untouched
@@ -49,5 +49,5 @@ def test_known_flags_do_not_warn():
 
   with warnings.catch_warnings():
     warnings.simplefilter('error')
-    p = hp.from_command(TrainParams, ['--optim.lr', '0.001', '--debug'])
+    p = hp.load(TrainParams, hp.cli(['--optim.lr', '0.001', '--debug']))
   assert p.optim.lr == 0.001

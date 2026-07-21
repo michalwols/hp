@@ -716,12 +716,13 @@ class Params(metaclass=ParamsMeta):
     Each source is a mapping, a config file path, ``hp.env`` / ``hp.cli``
     (optionally called to narrow them), or the strings ``'env'`` / ``'cli'``.
     Use :func:`hp.sources` afterwards to see which layer won a value.
-
-        params = hp.layered(Config, 'base.yaml', hp.env(prefix='APP'), hp.cli)
     """
+    return cls()._apply_layers(*sources, separator=separator)
+
+  def _apply_layers(self, *sources: Any, separator: str = '__') -> 'Params':
     from .views import Cli, CliSource, Env, EnvSource
 
-    hp = cls()
+    hp = self
     for entry in sources:
       prefix, argv = '', None
       if isinstance(entry, tuple) and entry and entry[0] == 'env':
@@ -935,8 +936,43 @@ def save(params: Params, path: str | Path) -> None:
   params._save(path)
 
 
-def load(cls: type[Params], path: str | Path) -> Params:
-  return cls._load(path)
+def load(target: Any = None, /, *sources: Any, separator: str = '__') -> Params:
+  """Build params from anything, layering extra sources on top.
+
+  ==================================  ======================================
+  ``load(Config)``                    a Config with its defaults
+  ``load(Config, 'a.yaml', hp.cli)``  layered, later sources winning
+  ``load('config.yaml')``             a file, as dynamic params
+  ``load(Cfg(lr=0.5))``               a dataclass / attrs / pydantic object
+  ``load(parser)``                    an argparse parser or namespace
+  ``load({'lr': 0.5})``               a mapping
+  ==================================  ======================================
+  """
+  from .adapt import from_object
+
+  if isinstance(target, type) and issubclass(target, Params):
+    return target._layered(*sources, separator=separator)
+
+  if target is None:
+    return Dynamic()._layered(*sources, separator=separator)
+
+  if isinstance(target, Params):
+    params = target
+  elif hasattr(target, 'parse_args'):
+    from .adapt import from_argparse
+
+    params = from_argparse(target)
+  elif isinstance(target, (str, Path)):
+    from .io import load as read
+
+    params = Dynamic()
+    params._update(read(target), source=str(target))
+  else:
+    params = from_object(target)
+
+  if sources:
+    params._apply_layers(*sources, separator=separator)
+  return params
 
 
 def from_command(cls: type[Params], args: str | list[str] | None = None) -> Params:

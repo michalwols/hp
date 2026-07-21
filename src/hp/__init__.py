@@ -31,14 +31,11 @@ from .core import (
   flatten,
   fork,
   freeze,
-  from_command,
-  from_env,
   get,
   grid,
   has,
   items,
   keys,
-  layered,
   load,
   on_change,
   sample,
@@ -66,24 +63,9 @@ from .fields import (
   Range,
   ValidationError,
 )
-from .adapt import (
-  construct,
-  from_argparse,
-  from_object,
-  to_argparse,
-)
-from .instrument import instrument, instrumented, restore
-from .registry import (
-  Entry,
-  calls,
-  clear,
-  entry,
-  parametrize,
-  params,
-  registry,
-  surface,
-  track,
-)
+from .adapt import construct, to_argparse
+from .context import active, override, scope
+from .registry import Entry, params, track
 from .views import cli, env
 
 __all__ = [
@@ -101,10 +83,7 @@ __all__ = [
   'UnknownParam',
   'Entry',
   # construction
-  'from_command',
-  'from_env',
   'load',
-  'layered',
   'schema',
   'define',
   'fields_from_callable',
@@ -139,27 +118,19 @@ __all__ = [
   # text optimization
   'evolvable',
   'apply_candidate',
-  # registry
-  'parametrize',
-  'track',
+  # registry, decorator and instrumenter, in one object
   'params',
-  'calls',
-  'entry',
-  'registry',
-  'surface',
-  'clear',
+  'track',
   # live views
   'env',
   'cli',
+  # scoping
+  'scope',
+  'override',
+  'active',
   # interop
-  'from_object',
   'construct',
   'to_argparse',
-  'from_argparse',
-  # instrumentation
-  'instrument',
-  'instrumented',
-  'restore',
   # cli
   'help_text',
 ]

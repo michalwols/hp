@@ -7,13 +7,13 @@ import hp
 
 @pytest.fixture(autouse=True)
 def clean_registry():
-  hp.clear()
+  hp.params.clear()
   yield
-  hp.clear()
+  hp.params.clear()
 
 
 def test_parametrize_reads_and_writes_params():
-  @hp.parametrize
+  @hp.params
   def train(epochs: int = 10, lr: float = 2e-4):
     return epochs, lr
 
@@ -29,7 +29,7 @@ def test_parametrize_accepts_existing_params():
 
   shared = Shared()
 
-  @hp.parametrize(params=shared)
+  @hp.params(params=shared)
   def train(epochs: int = 10):
     return epochs
 
@@ -38,13 +38,13 @@ def test_parametrize_accepts_existing_params():
 
 
 def test_parametrize_can_record_calls():
-  @hp.parametrize(record=True)
+  @hp.params(record=True)
   def train(epochs: int = 10):
     return epochs
 
   train()
   train(epochs=2)
-  assert len(hp.calls(train)) == 2
+  assert len(hp.params.calls(train)) == 2
 
 
 def test_track_records_without_mutating():
@@ -55,7 +55,7 @@ def test_track_records_without_mutating():
   assert train(lr=1e-3) == (10, 1e-3)
   assert train(5) == (5, 2e-4)
 
-  assert hp.calls(train) == [{'lr': 1e-3}, {'epochs': 5}]
+  assert hp.params.calls(train) == [{'lr': 1e-3}, {'epochs': 5}]
   assert hp.params(train).lr == 2e-4
 
 
@@ -66,13 +66,13 @@ def test_track_keeps_a_reference_to_the_target():
   tracked = hp.track(train)
   tracked()
 
-  record = hp.entry(tracked)
+  record = hp.params.entry(tracked)
   assert record.target is train
   assert record.mode == 'track'
 
 
 def test_registry_is_keyed_by_name():
-  @hp.parametrize(name='alpha')
+  @hp.params(name='alpha')
   def one(a: int = 1):
     return a
 
@@ -80,21 +80,28 @@ def test_registry_is_keyed_by_name():
   def two(b: int = 2):
     return b
 
-  assert list(hp.registry()) == ['alpha', 'beta']
+  assert list(hp.params.registry) == ['alpha', 'beta']
   assert hp.params('alpha').a == 1
-  assert hp.entry('beta').mode == 'track'
+  assert hp.params.entry('beta').mode == 'track'
 
 
-def test_unregistered_target_raises():
-  def plain():
-    pass
+def test_unregistered_callable_is_decorated():
+  # hp.params dispatches: an unregistered callable gets parametrized
+  def plain(a: int = 1):
+    return a
 
-  with pytest.raises(KeyError, match='not registered'):
-    hp.params(plain)
+  wrapped = hp.params(plain)
+  assert wrapped() == 1
+  assert hp.params(wrapped).a == 1
+
+
+def test_unknown_name_raises():
+  with pytest.raises(KeyError, match='nothing registered'):
+    hp.params('no-such-target')
 
 
 def test_parametrize_works_on_classes():
-  @hp.parametrize
+  @hp.params
   class Model:
     def __init__(self, width: int = 8):
       self.width = width
