@@ -55,6 +55,8 @@ from .core import (
 from .cli import help_text
 from .fields import (
   Choice,
+  Computed,
+  Derived,
   Evolve,
   Field,
   IntRange,
@@ -62,6 +64,8 @@ from .fields import (
   LogRange,
   Range,
   ValidationError,
+  computed,
+  derived,
 )
 from .adapt import construct, to_argparse
 from .context import active, override, scope
@@ -79,6 +83,10 @@ __all__ = [
   'IntRange',
   'LogIntRange',
   'Evolve',
+  'Derived',
+  'Computed',
+  'derived',
+  'computed',
   'ValidationError',
   'UnknownParam',
   'Entry',

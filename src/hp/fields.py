@@ -204,3 +204,105 @@ class Evolve(Field):
   @property
   def description(self) -> str | None:
     return self.help
+
+
+@dataclass
+class Derived(Field):
+  """A value computed from the other params, recomputed on every read.
+
+      class Train(hp.Params):
+        micro: int = 2
+        accum: int = 8
+        global_batch = hp.Derived(lambda p: p.micro * p.accum)
+
+  Derived values serialize like any other field but cannot be assigned, and
+  never appear in a search space -- searching them alongside their inputs is
+  the classic way to waste a sweep on redundant dimensions.
+  """
+
+  fn: Callable[[Any], Any] | None = None
+  cached: bool = False
+
+  def __init__(self, fn: Callable[[Any], Any], **kwargs: Any):
+    super().__init__(**kwargs)
+    self.fn = fn
+    self.cached = False
+    if self.help is None:
+      self.help = (fn.__doc__ or '').strip().split('\n')[0] or None
+
+  def compute(self, owner: Any) -> Any:
+    return self.fn(owner)
+
+  # data descriptor: __set__ is defined, so it always wins over the instance
+  # dict and the value cannot go stale
+  def __get__(self, obj: Any, owner: type | None = None) -> Any:
+    if obj is None:
+      return self
+    return self.compute(obj)
+
+  def __set__(self, obj: Any, value: Any) -> None:
+    raise AttributeError(f'{self.name!r} is derived and cannot be set')
+
+  def dependencies(self, owner: Any) -> set[str]:
+    """Which params this value read, discovered by running it once."""
+    seen: set[str] = set()
+    self.fn(_Recorder(owner, seen))
+    return seen
+
+
+@dataclass
+class Computed(Derived):
+  """A value computed once per params object and then fixed.
+
+      created_at = hp.Computed(lambda p: datetime.now(timezone.utc))
+
+  Use this for run ids, timestamps and hostnames -- things that should be
+  stable for the life of the object rather than re-evaluated on every read.
+  """
+
+  def __init__(self, fn: Callable[[Any], Any], **kwargs: Any):
+    super().__init__(fn, **kwargs)
+    self.cached = True
+
+  # non-data descriptor: the first read caches into the instance dict, which
+  # then shadows it
+  def __set__(self, obj: Any, value: Any) -> None:
+    raise AttributeError(f'{self.name!r} is computed and cannot be set')
+
+  def __get__(self, obj: Any, owner: type | None = None) -> Any:
+    if obj is None:
+      return self
+    cache = obj.__dict__.get('_computed')
+    if cache is None:
+      cache = {}
+      object.__setattr__(obj, '_computed', cache)
+    if self.name not in cache:
+      cache[self.name] = self.compute(obj)
+    return cache[self.name]
+
+
+class _Recorder:
+  """Stands in for params while a derived function runs, noting what it read."""
+
+  def __init__(self, target: Any, seen: set[str]):
+    object.__setattr__(self, '_target', target)
+    object.__setattr__(self, '_seen', seen)
+
+  def __getattr__(self, name: str) -> Any:
+    if not name.startswith('_'):
+      self._seen.add(name)
+    return getattr(self._target, name)
+
+  def __getitem__(self, key: str) -> Any:
+    self._seen.add(key)
+    return self._target[key]
+
+
+def derived(fn: Callable[[Any], Any]) -> Derived:
+  """Decorator form: ``@hp.derived`` on a method of a Params subclass."""
+  return Derived(fn)
+
+
+def computed(fn: Callable[[Any], Any]) -> Computed:
+  """Decorator form: ``@hp.computed`` on a method of a Params subclass."""
+  return Computed(fn)

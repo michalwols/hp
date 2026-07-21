@@ -187,6 +187,40 @@ Environment variables map `APP__OPTIM__LR` onto `optim.lr`. Only declared fields
 read — the environment is ambient, so unrecognized names are ignored rather than
 becoming config — and `Field(env='SERVICE_TOKEN')` binds an explicit name.
 
+## Derived and computed values
+
+`Derived` recomputes from the other params on every read, so it can never
+disagree with its inputs — and it is excluded from search spaces, because
+searching a value alongside the inputs it is computed from wastes the sweep on
+a redundant dimension:
+
+```python
+class Batch(hp.Params):
+  micro: int = hp.Choice((1, 2, 4), default=2)
+  accum: int = hp.IntRange(1, 32, default=8)
+
+  global_batch = hp.Derived(lambda p: p.micro * p.accum)
+
+  @hp.derived
+  def tokens_per_step(self):
+    """Sequence tokens per optimizer step."""
+    return self.global_batch * 2048
+```
+
+`Computed` is evaluated once per params object and then fixed, which is what a
+timestamp, run id or hostname wants:
+
+```python
+started_at = hp.Computed(lambda p: datetime.now(timezone.utc).isoformat())
+```
+
+Both serialize like ordinary fields, so a saved config records what was actually
+used, and neither can be assigned. A derived field can report what it reads:
+
+```python
+hp.fields(batch)['global_batch'].dependencies(batch)   # {'micro', 'accum'}
+```
+
 ## Conditional fields
 
 `when` gates whether a field participates in a search space, which keeps

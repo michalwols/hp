@@ -13,7 +13,7 @@ from itertools import product
 from pathlib import Path
 from typing import Any, ClassVar, Literal, Union, get_args, get_origin, get_type_hints
 
-from .fields import Choice, Field, MISSING, Range, ValidationError
+from .fields import Choice, Derived, Field, MISSING, Range, ValidationError
 
 
 class UnknownParam(UserWarning):
@@ -227,7 +227,9 @@ class ParamsMeta(ABCMeta):
       if get_origin(annotation) is ClassVar:
         continue
       raw = namespace.get(field_name, MISSING)
-      if isinstance(raw, Field):
+      if isinstance(raw, Derived):
+        field = raw
+      elif isinstance(raw, Field):
         field = raw.clone()
         if field.type is None:
           field.type = annotation
@@ -237,18 +239,22 @@ class ParamsMeta(ABCMeta):
         field = Field(default=default, type=annotation, required=required)
       field.name = field_name
       fields[field_name] = field
-      namespace.pop(field_name, None)
+      if not isinstance(field, Derived):
+        namespace.pop(field_name, None)
 
     for field_name, raw in candidates.items():
       if field_name in annotations:
         continue
-      if isinstance(raw, Field):
+      if isinstance(raw, Derived):
+        field = raw
+      elif isinstance(raw, Field):
         field = raw.clone()
       else:
         field = Field(default=raw, type=type(raw))
       field.name = field_name
       fields[field_name] = field
-      namespace.pop(field_name, None)
+      if not isinstance(field, Derived):
+        namespace.pop(field_name, None)
 
     namespace['__fields__'] = fields
     namespace['__dynamic__'] = dynamic
@@ -266,6 +272,9 @@ class Params(metaclass=ParamsMeta):
     object.__setattr__(self, '_sources', {})
     object.__setattr__(self, '_source', 'default')
     for name, field in self.__class__.__fields__.items():
+      if isinstance(field, Derived):
+        self._sources[name] = 'derived'
+        continue
       value = field.make_default()
       if value is not MISSING:
         value = coerce(value, field.type, field)
