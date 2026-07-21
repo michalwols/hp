@@ -22,6 +22,7 @@ approach against the alternatives.
 | `05_paired_preference.py` | sketch | Elo / Bradley-Terry feedback, where there is no absolute score |
 | `06_resource_allocation.py` | sketch | symbolic constraints an OR solver can actually read |
 | `07_agent_optimization.py` | sketch | text components, traces, and an optimizer that edits a harness |
+| `08_priors_and_references.py` | sketch | mining cases, oracles, validators and priors out of logs, test suites and the current system |
 
 ## The question these are exploring
 
@@ -48,6 +49,10 @@ Reading the trade-offs across these files, the same split keeps appearing:
   constraints prune infeasible candidates before they are evaluated, which pays
   off in every problem. Symbolic *objectives* only pay off when the objective is
   cheap or closed-form, which excludes most ML.
+- **A reference implementation is a constraint, not an objective.** Pinning
+  correctness to parity with what already ships turns an unmeasurable goal into
+  a measurable one — but it caps quality at parity, so it is a safety rail
+  rather than the thing being improved.
 - **Paired feedback needs its own channel**, because reducing it to a win rate
   against a baseline throws away most of the signal — and because it breaks the
   assumption that a finished trial has a final score.
