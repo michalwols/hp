@@ -786,3 +786,25 @@ def schema(
     namespace['__annotations__'][field_name] = field.type or Any
     namespace[field_name] = field
   return ParamsMeta(name or _class_name(target), (base or Params,), namespace)
+
+
+def evolvable(params: Params, *, group: str | None = None) -> dict[str, str]:
+  """Dotted paths and current values for every Evolve field.
+
+  This is the seed candidate for a text optimizer; pass ``group`` to take
+  only one labelled subset.
+  """
+  from .fields import Evolve
+
+  return {
+    path: params[path]
+    for path, field in params.field_paths().items()
+    if isinstance(field, Evolve) and (group is None or field.group == group)
+  }
+
+
+def apply_candidate(params: Params, candidate: Mapping[str, str]) -> Params:
+  """Fork ``params`` and apply a candidate's text components by dotted path."""
+  clone = params.fork()
+  clone.update(_nest(dict(candidate)), source='candidate')
+  return clone

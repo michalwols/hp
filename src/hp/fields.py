@@ -171,3 +171,36 @@ def IntRange(low: int, high: int, **kwargs: Any) -> Range:
 
 def LogIntRange(low: int, high: int, **kwargs: Any) -> Range:
   return Range(low, high, integer=True, log=True, **kwargs)
+
+
+@dataclass
+class Evolve(Field):
+  """A text field an outer-loop optimizer is allowed to rewrite.
+
+  Ordinary string fields stay ordinary; only fields marked this way are
+  exposed as candidate components to text optimizers like GEPA.
+
+      system_prompt: str = Evolve(
+        'You are a data agent...',
+        description='Main behavioral instructions',
+      )
+  """
+
+  group: str | None = None
+
+  def __init__(
+    self,
+    default: str = '',
+    *,
+    description: str | None = None,
+    group: str | None = None,
+    **kwargs: Any,
+  ):
+    if description is not None:
+      kwargs.setdefault('help', description)
+    super().__init__(default=default, type=str, **kwargs)
+    self.group = group
+
+  @property
+  def description(self) -> str | None:
+    return self.help

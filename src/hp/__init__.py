@@ -3,9 +3,10 @@ from __future__ import annotations
 from typing import Any
 
 from .callable import fields_from_callable
-from .core import Dynamic, Params, UnknownParam, schema
+from .core import Dynamic, Params, UnknownParam, apply_candidate, evolvable, schema
 from .fields import (
   Choice,
+  Evolve,
   Field,
   IntRange,
   LogIntRange,
@@ -31,7 +32,10 @@ def wrap(target: Any = None, **kwargs: Any):
 __all__ = [
   'Params',
   'Dynamic',
+  'Evolve',
   'UnknownParam',
+  'evolvable',
+  'apply_candidate',
   'Field',
   'Choice',
   'Range',

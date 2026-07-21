@@ -171,3 +171,35 @@ def test_unknown_flag_still_warns_after_union_resolution():
     warnings.simplefilter('always')
     Cfg.from_command(['--optimizer.name', 'sgd', '--optimizer.nope', '1'])
   assert any(issubclass(w.category, hp.UnknownParam) for w in caught)
+
+
+class Agent(hp.Params):
+  system_prompt: str = hp.Evolve('You are a data agent.', description='Main behavior')
+  sql_tool: str = hp.Evolve('Run read-only SQL.', group='tools')
+  model: str = 'Qwen3-4B'
+
+
+class AgentCfg(hp.Params):
+  agent: Agent = Agent()
+
+
+def test_evolvable_exposes_only_marked_text_fields():
+  candidate = hp.evolvable(AgentCfg())
+  assert set(candidate) == {'agent.system_prompt', 'agent.sql_tool'}
+  assert candidate['agent.system_prompt'] == 'You are a data agent.'
+
+
+def test_evolvable_filters_by_group():
+  assert list(hp.evolvable(AgentCfg(), group='tools')) == ['agent.sql_tool']
+
+
+def test_evolve_fields_are_not_searchable():
+  assert AgentCfg().space() == {}
+
+
+def test_apply_candidate_forks_and_records_source():
+  original = AgentCfg()
+  best = hp.apply_candidate(original, {'agent.system_prompt': 'IMPROVED'})
+  assert best.agent.system_prompt == 'IMPROVED'
+  assert original.agent.system_prompt == 'You are a data agent.'
+  assert best.source('agent.system_prompt') == 'candidate'
