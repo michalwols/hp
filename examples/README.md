@@ -24,6 +24,7 @@ approach against the alternatives.
 | `07_agent_optimization.py` | sketch | text components, traces, and an optimizer that edits a harness |
 | `08_priors_and_references.py` | sketch | mining cases, oracles, validators and priors out of logs, test suites and the current system |
 | `09_multilog.py` | sketch | hp as the config layer under a columnar tracking tool (parquet / lance / duckdb) |
+| `10_image_generation.py` | sketch | end-to-end: cheap verifiers screening, human pairwise deciding, and the reward-hacking defences |
 
 ## The question these are exploring
 
