@@ -76,6 +76,35 @@ class OpenParams(hp.Params, dynamic=True):
   seed: int = 42
 ```
 
+## Typed unions
+
+A field typed as a union of `Params` classes resolves to the variant matching its
+discriminator — any field the variants share as a distinct `Literal`:
+
+```python
+class AdamW(hp.Params):
+  name: Literal['adamw'] = 'adamw'
+  lr: float = 2e-4
+
+class SGD(hp.Params):
+  name: Literal['sgd'] = 'sgd'
+  lr: float = 1e-2
+  momentum: float = 0.9
+
+class TrainParams(hp.Params):
+  optimizer: AdamW | SGD = AdamW()
+```
+
+Selecting a variant works the same from a dict, a config file, or the command line:
+
+```
+--optimizer.name sgd --optimizer.momentum 0.8
+```
+
+Flags are applied together rather than one at a time, so the result does not depend
+on their order. Values you set explicitly carry across a switch; the outgoing
+variant's own defaults do not.
+
 ## Command line
 
 ```python
@@ -85,6 +114,59 @@ params = TrainParams.from_command('--optimizer.lr 1e-4') # or a string / argv li
 
 Dashed flags map onto underscore field paths, so `--weight-decay=0.1` and
 `--weight_decay=0.1` are equivalent. Booleans accept `--debug` and `--no-debug`.
+`--help` renders from the field tree:
+
+```
+Usage: train.py [OPTIONS]
+
+Options:
+  --seed INT                        random seed (default: 42)
+  --debug / --no-debug              (default: False)
+  --method {sft,grpo}               training method (default: 'sft')
+  --optim.lr [1e-06..0.001]         peak learning rate (default: 0.0002)
+  --optim.weight-decay FLOAT, --wd  AdamW weight decay (default: 0.01)
+  --help, -h                        Show this message and exit.
+```
+
+`Field(help=...)` supplies the description, `Field(alias='wd')` adds a second spelling
+(also accepted by `update()`, which makes it a migration path for renamed fields), and
+`secret=True` fields never print their value.
+
+## Layering and provenance
+
+Sources compose in order, later ones winning:
+
+```python
+params = TrainParams.layered('base.yaml', 'experiment.yaml', ('env', 'APP'), 'cli')
+```
+
+Every value remembers which layer set it:
+
+```python
+params.source('optim.lr')   # 'experiment.yaml'
+params.sources()            # {'seed': 'default', 'optim.lr': 'experiment.yaml', ...}
+```
+
+Environment variables map `APP__OPTIM__LR` onto `optim.lr`. Only declared fields are
+read — the environment is ambient, so unrecognized names are ignored rather than
+becoming config — and `Field(env='SERVICE_TOKEN')` binds an explicit name.
+
+## Conditional fields
+
+`when` gates whether a field participates in a search space, which keeps
+mutually-irrelevant options out of a sweep:
+
+```python
+class RLParams(hp.Params):
+  method: str = hp.Choice(('sft', 'grpo'), default='grpo')
+  group_size: int = hp.Choice((4, 8, 16), default=8,
+                              when=lambda root: root.rl.method == 'grpo')
+```
+
+The callable receives the root params, so conditions can reference anything in the
+tree. `space()` hides inactive fields, `sample()` settles them back to their defaults
+once the fields they depend on are drawn, and `grid()` drops the duplicate
+configurations that conditions collapse together.
 
 ## Bind, watch, and wrap
 

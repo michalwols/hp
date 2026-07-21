@@ -23,12 +23,21 @@ class Field:
   required: bool = False
   secret: bool = False
   factory: Callable[[], Any] | None = None
+  # Gates whether this field participates in a search space. Receives the
+  # root params, so conditions can reference values elsewhere in the tree:
+  #   group_size = Choice((4, 8), when=lambda root: root.rl.method == 'grpo')
+  when: Callable[[Any], bool] | None = None
 
   name: str | None = None
 
   @property
   def searchable(self) -> bool:
     return False
+
+  def is_active(self, root: Any = None) -> bool:
+    if self.when is None:
+      return True
+    return bool(self.when(root))
 
   def clone(self) -> 'Field':
     return copy.deepcopy(self)
