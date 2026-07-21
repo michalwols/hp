@@ -470,16 +470,6 @@ class Params(MutableMapping[str, Any], metaclass=ParamsMeta):
         clone[path] = value
       yield clone
 
-  @classmethod
-  def schema(cls, target: Any, *, name: str | None = None) -> type['Params']:
-    from .callable import fields_from_callable
-    fields = fields_from_callable(target)
-    namespace: dict[str, Any] = {'__annotations__': {}}
-    for field_name, field in fields.items():
-      namespace['__annotations__'][field_name] = field.type or Any
-      namespace[field_name] = field
-    return ParamsMeta(name or f'{getattr(target, "__name__", "Callable").title()}Params', (cls,), namespace)
-
   def define(self, target: Any, *, mapping: Mapping[str, str] | None = None) -> 'Params':
     from .callable import fields_from_callable
     fields = fields_from_callable(target)
@@ -556,3 +546,32 @@ class Dynamic(Params, dynamic=True):
   Declared classes can opt into the same behavior with
   ``class Config(Params, dynamic=True)``.
   """
+
+
+def _class_name(target: Any) -> str:
+  raw = getattr(target, '__name__', 'callable')
+  parts = [part for part in raw.strip('<>').split('_') if part]
+  if not parts:
+    return 'CallableParams'
+  return ''.join(part.title() for part in parts) + 'Params'
+
+
+def schema(
+  target: Any,
+  *,
+  name: str | None = None,
+  base: type[Params] | None = None,
+) -> type[Params]:
+  """Build a Params subclass from a callable's signature.
+
+  ``base`` selects the class to derive from, so schemas can inherit shared
+  fields or opt into dynamic behavior.
+  """
+  from .callable import fields_from_callable
+
+  fields = fields_from_callable(target)
+  namespace: dict[str, Any] = {'__annotations__': {}}
+  for field_name, field in fields.items():
+    namespace['__annotations__'][field_name] = field.type or Any
+    namespace[field_name] = field
+  return ParamsMeta(name or _class_name(target), (base or Params,), namespace)

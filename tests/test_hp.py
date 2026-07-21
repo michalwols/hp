@@ -207,3 +207,26 @@ def test_mapping_contains():
 def test_legacy_aliases():
   assert hp.HP is hp.Params
   assert hp.HyperParams is hp.Params
+
+
+def test_schema_is_module_level_only():
+  def train_model(epochs: int = 10):
+    pass
+
+  Schema = hp.schema(train_model)
+  assert Schema.__name__ == 'TrainModelParams'
+  assert not hasattr(hp.Params, 'schema')
+
+
+def test_schema_accepts_a_base_class():
+  class Shared(hp.Params):
+    seed: int = 42
+
+  def train(epochs: int = 10):
+    pass
+
+  Schema = hp.schema(train, base=Shared, name='TrainSchema')
+  p = Schema()
+  assert Schema.__name__ == 'TrainSchema'
+  assert p.seed == 42
+  assert p.epochs == 10

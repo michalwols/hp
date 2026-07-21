@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from .callable import fields_from_callable
-from .core import Dynamic, Params, UnknownParam
+from .core import Dynamic, Params, UnknownParam, schema
 from .fields import (
   Choice,
   Field,
@@ -21,16 +21,11 @@ HyperParams = Params
 
 def wrap(target: Any = None, **kwargs: Any):
   def apply(target):
-    schema = Params.schema(target)
-    params = schema()
+    params = schema(target)()
     wrapped = params.wrap(target, **kwargs)
     wrapped.hp = params
     return wrapped
   return apply(target) if target is not None else apply
-
-
-def schema(target: Any, **kwargs: Any):
-  return Params.schema(target, **kwargs)
 
 
 __all__ = [

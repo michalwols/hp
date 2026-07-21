@@ -132,8 +132,17 @@ train()
 ```python
 def train(epochs: int = 10, lr: float = 2e-4): ...
 
-TrainParams = hp.schema(train)
+TrainParams = hp.schema(train)   # -> class TrainParams
 params = TrainParams(lr=1e-4)
+```
+
+Pass `base=` to inherit shared fields, and `name=` to control the class name:
+
+```python
+class Shared(hp.Params):
+  seed: int = 42
+
+TrainParams = hp.schema(train, base=Shared)
 ```
 
 ## Search spaces
