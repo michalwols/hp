@@ -8,7 +8,7 @@ import os
 import types
 from abc import ABCMeta
 from collections import OrderedDict
-from collections.abc import Iterable, Iterator, Mapping, MutableMapping
+from collections.abc import Iterable, Iterator, Mapping
 from itertools import product
 from pathlib import Path
 from typing import Any, ClassVar, Literal, Union, get_args, get_origin, get_type_hints
@@ -30,7 +30,7 @@ def _unknown_param_warning(owner: 'Params', name: str, stacklevel: int = 3) -> N
   import difflib
   import warnings
 
-  close = difflib.get_close_matches(name, tuple(owner.fields), n=3)
+  close = difflib.get_close_matches(name, tuple(owner._field_map), n=3)
   hint = f'; did you mean {" or ".join(repr(c) for c in close)}?' if close else ''
   warnings.warn(
     f'{type(owner).__name__} has no declared field {name!r}{hint}',
@@ -64,7 +64,7 @@ def _restamp(node: 'Params', source: str) -> None:
   for name, origin in node._sources.items():
     if origin == 'code':
       node._sources[name] = source
-  for value in node.values():
+  for value in node._values():
     if isinstance(value, Params):
       _restamp(value, source)
 
@@ -195,7 +195,7 @@ def coerce(value: Any, annotation: Any, field: Field | None = None) -> Any:
     return tuple(coerce(item, arg) for item, arg in zip(values, args))
   if isinstance(value, Mapping) and annotation in (None, Any, dict):
     node = Dynamic()
-    node.update(value, strict=False)
+    node._update(value, strict=False)
     return node
   return _coerce_scalar(value, annotation)
 
@@ -255,7 +255,7 @@ class ParamsMeta(ABCMeta):
     return super().__new__(mcls, name, bases, namespace)
 
 
-class Params(MutableMapping[str, Any], metaclass=ParamsMeta):
+class Params(metaclass=ParamsMeta):
   __fields__: ClassVar[OrderedDict[str, Field]]
   __dynamic__: ClassVar[bool] = False
 
@@ -273,11 +273,11 @@ class Params(MutableMapping[str, Any], metaclass=ParamsMeta):
       self._sources[name] = 'default'
     object.__setattr__(self, '_source', 'code')
     for mapping in args:
-      self.update(mapping)
-    self.update(values)
+      self._update(mapping)
+    self._update(values)
 
   @property
-  def fields(self) -> OrderedDict[str, Field]:
+  def _field_map(self) -> OrderedDict[str, Field]:
     fields = OrderedDict((k, v) for k, v in self.__class__.__fields__.items())
     fields.update(self._fields)
     return fields
@@ -297,12 +297,12 @@ class Params(MutableMapping[str, Any], metaclass=ParamsMeta):
       return
     if self._frozen:
       raise TypeError(f'{type(self).__name__} is frozen')
-    field = self.fields.get(name)
+    field = self._field_map.get(name)
     if field is None:
       # unknown names become real fields, so they serialize like declared ones
       if isinstance(value, Mapping) and not isinstance(value, Params):
         node = Dynamic()
-        node.update(value, strict=False)
+        node._update(value, strict=False)
         value = node
       field = Field(default=copy.deepcopy(value), type=type(value), name=name)
       self._fields[name] = field
@@ -344,7 +344,7 @@ class Params(MutableMapping[str, Any], metaclass=ParamsMeta):
       owner, child = self._path('.'.join(parts[:-1]))
     except KeyError:
       return
-    field = owner.fields.get(child)
+    field = owner._field_map.get(child)
     if field is None:
       return
     variants = _params_union_variants(field.type)
@@ -362,7 +362,7 @@ class Params(MutableMapping[str, Any], metaclass=ParamsMeta):
     # defaults should not override the incoming one's
     carried = {
       key: value
-      for key, value in current.to_dict(secrets=True).items()
+      for key, value in current._to_dict(secrets=True).items()
       if key in target.__fields__
       and key != discriminator
       and current._sources.get(key, 'default') != 'default'
@@ -377,10 +377,27 @@ class Params(MutableMapping[str, Any], metaclass=ParamsMeta):
     object.__delattr__(node, name)
 
   def __iter__(self) -> Iterator[str]:
-    return iter(self.fields)
+    return iter(self._field_map)
+
+  def _keys(self) -> Iterator[str]:
+    return iter(self._field_map)
+
+  def _values(self) -> Iterator[Any]:
+    return (getattr(self, name, MISSING) for name in self._field_map)
+
+  def _items(self) -> Iterator[tuple[str, Any]]:
+    return ((name, getattr(self, name, MISSING)) for name in self._field_map)
+
+  def __contains__(self, key: str) -> bool:
+    return self._has(key)
+
+  def __eq__(self, other: Any) -> bool:
+    if not isinstance(other, Params):
+      return NotImplemented
+    return self._to_dict(secrets=True) == other._to_dict(secrets=True)
 
   def __len__(self) -> int:
-    return len(self.fields)
+    return len(self._field_map)
 
   def _path(self, path: str, create: bool = False) -> tuple['Params', str]:
     parts = path.split('.')
@@ -402,23 +419,23 @@ class Params(MutableMapping[str, Any], metaclass=ParamsMeta):
       node = child
     return node, parts[-1]
 
-  def get_path(self, path: str, default: Any = None) -> Any:
+  def _get_path(self, path: str, default: Any = None) -> Any:
     try:
       return self[path]
     except (KeyError, AttributeError):
       return default
 
-  def has(self, path: str) -> bool:
+  def _has(self, path: str) -> bool:
     sentinel = object()
-    return self.get_path(path, sentinel) is not sentinel
+    return self._get_path(path, sentinel) is not sentinel
 
   def _resolve_alias(self, key: str) -> str:
-    for name, field in self.fields.items():
+    for name, field in self._field_map.items():
       if field.alias == key:
         return name
     return key
 
-  def update(
+  def _update(
     self,
     other: Mapping[str, Any] | Iterable[tuple[str, Any]] | None = None,
     *,
@@ -437,130 +454,130 @@ class Params(MutableMapping[str, Any], metaclass=ParamsMeta):
           self[key] = value
           continue
         key = self._resolve_alias(key)
-        if key not in self.fields:
+        if key not in self._field_map:
           if strict and not self.__dynamic__:
-            raise KeyError(f'unknown parameter {key!r}; expected one of {tuple(self.fields)!r}')
+            raise KeyError(f'unknown parameter {key!r}; expected one of {tuple(self._field_map)!r}')
           _unknown_param_warning(self, key)
           setattr(self, key, value)
           continue
         current = getattr(self, key, MISSING)
-        field = self.fields[key]
+        field = self._field_map[key]
         if isinstance(current, Params) and isinstance(value, Mapping):
           variants = _params_union_variants(field.type)
           # replace only when a different variant was actually requested;
           # a partial update just merges into the variant already there
           if variants is None or variants[0] not in value:
-            current.update(value, strict=strict, source=source)
+            current._update(value, strict=strict, source=source)
             continue
         setattr(self, key, value)
     finally:
       object.__setattr__(self, '_source', previous)
     return self
 
-  def source(self, path: str) -> str:
+  def _source_of(self, path: str) -> str:
     """Which layer last set this value: default, code, cli, env, or a filename."""
     node, name = self._path(path)
     return node._sources.get(name, 'default')
 
-  def sources(self, prefix: str = '') -> dict[str, str]:
+  def _all_sources(self, prefix: str = '') -> dict[str, str]:
     """Provenance for every value in the tree, keyed by dotted path."""
     output: dict[str, str] = {}
-    for name in self.fields:
+    for name in self._field_map:
       path = f'{prefix}.{name}' if prefix else name
       value = getattr(self, name, MISSING)
       if isinstance(value, Params):
-        output.update(value.sources(path))
+        output.update(value._all_sources(path))
       else:
         output[path] = self._sources.get(name, 'default')
     return output
 
-  def validate(self, recursive: bool = True) -> 'Params':
-    for name, field in self.fields.items():
+  def _validate(self, recursive: bool = True) -> 'Params':
+    for name, field in self._field_map.items():
       value = getattr(self, name, MISSING)
       field.validate(value)
       if value is not MISSING and field.type is not None and not _matches_type(value, field.type):
         raise ValidationError(f'{name} expected {field.type!r}, got {type(value)!r}')
       if recursive and isinstance(value, Params):
-        value.validate()
+        value._validate()
     return self
 
-  def to_dict(self, *, secrets: bool = False) -> dict[str, Any]:
+  def _to_dict(self, *, secrets: bool = False) -> dict[str, Any]:
     result: dict[str, Any] = {}
-    for name, field in self.fields.items():
+    for name, field in self._field_map.items():
       if field.secret and not secrets:
         continue
       value = getattr(self, name, MISSING)
       if value is MISSING:
         continue
       if isinstance(value, Params):
-        value = value.to_dict(secrets=secrets)
+        value = value._to_dict(secrets=secrets)
       elif isinstance(value, list):
-        value = [v.to_dict(secrets=secrets) if isinstance(v, Params) else v for v in value]
+        value = [v._to_dict(secrets=secrets) if isinstance(v, Params) else v for v in value]
       result[name] = copy.deepcopy(value)
     return result
 
-  def flatten(self, prefix: str = '') -> dict[str, Any]:
+  def _flatten(self, prefix: str = '') -> dict[str, Any]:
     output: dict[str, Any] = {}
-    for name, value in self.items():
+    for name, value in self._items():
       path = f'{prefix}.{name}' if prefix else name
       if isinstance(value, Params):
-        output.update(value.flatten(path))
+        output.update(value._flatten(path))
       else:
         output[path] = value
     return output
 
-  def fork(self, **updates: Any) -> 'Params':
+  def _fork(self, **updates: Any) -> 'Params':
     clone = copy.deepcopy(self)
     object.__setattr__(clone, '_frozen', False)
-    clone.update(updates, strict=True)
+    clone._update(updates, strict=True)
     return clone
 
-  def freeze(self, recursive: bool = True) -> 'Params':
+  def _freeze(self, recursive: bool = True) -> 'Params':
     if recursive:
-      for value in self.values():
+      for value in self._values():
         if isinstance(value, Params):
-          value.freeze()
+          value._freeze()
     object.__setattr__(self, '_frozen', True)
     return self
 
-  def unfreeze(self, recursive: bool = True) -> 'Params':
+  def _unfreeze(self, recursive: bool = True) -> 'Params':
     object.__setattr__(self, '_frozen', False)
     if recursive:
-      for value in self.values():
+      for value in self._values():
         if isinstance(value, Params):
-          value.unfreeze()
+          value._unfreeze()
     return self
 
-  def stable_hash(self, length: int = 12) -> str:
-    payload = json.dumps(self.to_dict(secrets=True), sort_keys=True, separators=(',', ':'), default=str)
+  def _stable_hash(self, length: int = 12) -> str:
+    payload = json.dumps(self._to_dict(secrets=True), sort_keys=True, separators=(',', ':'), default=str)
     return hashlib.sha256(payload.encode()).hexdigest()[:length]
 
-  def diff(self, other: 'Params | Mapping[str, Any]') -> dict[str, tuple[Any, Any]]:
-    left = self.flatten()
-    right = other.flatten() if isinstance(other, Params) else Dynamic(**other).flatten()
+  def _diff(self, other: 'Params | Mapping[str, Any]') -> dict[str, tuple[Any, Any]]:
+    left = self._flatten()
+    right = other._flatten() if isinstance(other, Params) else Dynamic(**other)._flatten()
     return {
       key: (left.get(key, MISSING), right.get(key, MISSING))
       for key in left.keys() | right.keys()
       if left.get(key, MISSING) != right.get(key, MISSING)
     }
 
-  def on_change(self, callback: Any) -> Any:
+  def _on_change(self, callback: Any) -> Any:
     self._change_callbacks.append(callback)
     return callback
 
-  def field_paths(self, prefix: str = '') -> OrderedDict[str, Field]:
+  def _field_paths(self, prefix: str = '') -> OrderedDict[str, Field]:
     """Every field in the tree, keyed by dotted path."""
     output: OrderedDict[str, Field] = OrderedDict()
-    for name, field in self.fields.items():
+    for name, field in self._field_map.items():
       path = f'{prefix}.{name}' if prefix else name
       value = getattr(self, name, MISSING)
       if isinstance(value, Params):
-        output.update(value.field_paths(path))
+        output.update(value._field_paths(path))
       else:
         output[path] = field
     return output
 
-  def space(
+  def _space(
     self,
     prefix: str = '',
     root: 'Params | None' = None,
@@ -574,18 +591,18 @@ class Params(MutableMapping[str, Any], metaclass=ParamsMeta):
     """
     root = self if root is None else root
     output: dict[str, Field] = {}
-    for name, field in self.fields.items():
+    for name, field in self._field_map.items():
       path = f'{prefix}.{name}' if prefix else name
       value = getattr(self, name, MISSING)
       if isinstance(value, Params):
-        output.update(value.space(path, root, active_only=active_only))
+        output.update(value._space(path, root, active_only=active_only))
       elif field.searchable and (not active_only or field.is_active(root)):
         output[path] = field
     return output
 
   def _sampled(self, rng: Any) -> 'Params':
-    candidates = self.space(active_only=False)
-    clone = self.fork()
+    candidates = self._space(active_only=False)
+    clone = self._fork()
     for path, field in candidates.items():
       clone[path] = field.sample(rng)
     # a condition may only become false once the fields it depends on are
@@ -595,42 +612,42 @@ class Params(MutableMapping[str, Any], metaclass=ParamsMeta):
         clone[path] = field.make_default()
     return clone
 
-  def sample(self, seed: int | None = None) -> 'Params':
+  def _sample(self, seed: int | None = None) -> 'Params':
     import random
     return self._sampled(random.Random(seed))
 
-  def samples(self, count: int, seed: int | None = None) -> Iterator['Params']:
+  def _samples(self, count: int, seed: int | None = None) -> Iterator['Params']:
     import random
     rng = random.Random(seed)
     for _ in range(count):
       yield self._sampled(rng)
 
-  def grid(self) -> Iterator['Params']:
-    space = self.space(active_only=False)
+  def _grid(self) -> Iterator['Params']:
+    space = self._space(active_only=False)
     paths = tuple(space)
     seen: set[str] = set()
     for values in product(*(tuple(space[path].grid()) for path in paths)):
-      clone = self.fork()
+      clone = self._fork()
       for path, value in zip(paths, values):
         clone[path] = value
       for path in paths:
         if not space[path].is_active(clone):
           clone[path] = space[path].make_default()
       # conditions collapse distinct draws onto the same config
-      digest = clone.stable_hash()
+      digest = clone._stable_hash()
       if digest in seen:
         continue
       seen.add(digest)
       yield clone
 
-  def define(self, target: Any, *, mapping: Mapping[str, str] | None = None) -> 'Params':
+  def _define(self, target: Any, *, mapping: Mapping[str, str] | None = None) -> 'Params':
     from .callable import fields_from_callable
     fields = fields_from_callable(target)
     mapping = mapping or {}
     for arg, field in fields.items():
       path = mapping.get(arg, arg)
       node, name = self._path(path, create=True)
-      if name in node.fields:
+      if name in node._field_map:
         continue
       node._fields[name] = field
       value = field.make_default()
@@ -638,20 +655,8 @@ class Params(MutableMapping[str, Any], metaclass=ParamsMeta):
         object.__setattr__(node, name, coerce(value, field.type, field))
     return self
 
-  def bind(self, target: Any = None, **kwargs: Any) -> Any:
-    from .callable import decorate
-    return decorate(self, target, mode='bind', **kwargs)
-
-  def watch(self, target: Any = None, **kwargs: Any) -> Any:
-    from .callable import decorate
-    return decorate(self, target, mode='watch', **kwargs)
-
-  def wrap(self, target: Any = None, **kwargs: Any) -> Any:
-    from .callable import decorate
-    return decorate(self, target, mode='wrap', **kwargs)
-
   @classmethod
-  def from_env(cls, prefix: str = '', *, separator: str = '__') -> 'Params':
+  def _from_env(cls, prefix: str = '', *, separator: str = '__') -> 'Params':
     """Populate from environment variables.
 
     ``APP__OPTIM__LR`` maps to ``optim.lr`` under prefix ``APP``. Only
@@ -660,7 +665,7 @@ class Params(MutableMapping[str, Any], metaclass=ParamsMeta):
     dynamic. A field's explicit ``env`` name takes precedence.
     """
     hp = cls()
-    hp.update(_nest(hp._env_updates(prefix, separator)), source='env')
+    hp._update(_nest(hp._env_updates(prefix, separator)), source='env')
     return hp
 
   def _env_updates(self, prefix: str = '', separator: str = '__') -> dict[str, Any]:
@@ -668,7 +673,7 @@ class Params(MutableMapping[str, Any], metaclass=ParamsMeta):
 
     explicit = {
       field.env: path
-      for path, field in self.field_paths().items()
+      for path, field in self._field_paths().items()
       if field.env
     }
     for name, path in explicit.items():
@@ -684,12 +689,12 @@ class Params(MutableMapping[str, Any], metaclass=ParamsMeta):
       if not remainder:
         continue
       path = remainder.lower().replace(separator.lower(), '.')
-      if self.has(path) or self.__dynamic__:
+      if self._has(path) or self.__dynamic__:
         updates.setdefault(path, value)
     return updates
 
   @classmethod
-  def from_command(cls, args: str | list[str] | None = None) -> 'Params':
+  def _from_command(cls, args: str | list[str] | None = None) -> 'Params':
     from .cli import parse
     if isinstance(args, str):
       import shlex
@@ -697,23 +702,21 @@ class Params(MutableMapping[str, Any], metaclass=ParamsMeta):
     hp = cls()
     return parse(hp, args)
 
-  from_cli = from_command
-
   @classmethod
-  def load(cls, path: str | Path) -> 'Params':
+  def _load(cls, path: str | Path) -> 'Params':
     from .io import load
     hp = cls()
-    hp.update(load(path), source=str(path))
+    hp._update(load(path), source=str(path))
     return hp
 
   @classmethod
-  def layered(cls, *sources: Any, separator: str = '__') -> 'Params':
+  def _layered(cls, *sources: Any, separator: str = '__') -> 'Params':
     """Compose ordered sources, later ones winning.
 
     Each source is a mapping, a config file path, or the string ``'env'`` or
     ``'cli'``. Use :meth:`sources` afterwards to see which layer won a value.
 
-        params = TrainParams.layered('base.yaml', 'experiment.yaml', 'env', 'cli')
+        params = TrainParams._layered('base.yaml', 'experiment.yaml', 'env', 'cli')
     """
     hp = cls()
     for entry in sources:
@@ -721,28 +724,28 @@ class Params(MutableMapping[str, Any], metaclass=ParamsMeta):
       if isinstance(entry, tuple) and entry and entry[0] == 'env':
         entry, prefix = 'env', entry[1] if len(entry) > 1 else ''
       if entry == 'env':
-        hp.update(_nest(hp._env_updates(prefix, separator)), source='env')
+        hp._update(_nest(hp._env_updates(prefix, separator)), source='env')
       elif entry == 'cli':
         from .cli import parse
         parse(hp, None)
       elif isinstance(entry, Mapping):
-        hp.update(entry, source='mapping')
+        hp._update(entry, source='mapping')
       else:
         from .io import load
-        hp.update(load(entry), source=str(entry))
+        hp._update(load(entry), source=str(entry))
     return hp
 
-  def save(self, path: str | Path) -> None:
+  def _save(self, path: str | Path) -> None:
     from .io import save
-    save(self.to_dict(secrets=True), path)
+    save(self._to_dict(secrets=True), path)
 
   def __hash__(self) -> int:
     # by current content, like any other value object; do not mutate a
     # params object while it is in use as a dict key
-    return hash(self.stable_hash())
+    return hash(self._stable_hash())
 
   def __repr__(self) -> str:
-    body = ', '.join(f'{k}={v!r}' for k, v in self.items())
+    body = ', '.join(f'{k}={v!r}' for k, v in self._items())
     return f'{type(self).__name__}({body})'
 
 
@@ -798,13 +801,138 @@ def evolvable(params: Params, *, group: str | None = None) -> dict[str, str]:
 
   return {
     path: params[path]
-    for path, field in params.field_paths().items()
+    for path, field in params._field_paths().items()
     if isinstance(field, Evolve) and (group is None or field.group == group)
   }
 
 
 def apply_candidate(params: Params, candidate: Mapping[str, str]) -> Params:
   """Fork ``params`` and apply a candidate's text components by dotted path."""
-  clone = params.fork()
-  clone.update(_nest(dict(candidate)), source='candidate')
+  clone = params._fork()
+  clone._update(_nest(dict(candidate)), source='candidate')
   return clone
+
+
+# ---------------------------------------------------------------------------
+# Operations live on the module, not the class, so that every attribute name
+# stays available for user fields: `class P(Params): sample = 4` is fine.
+# ---------------------------------------------------------------------------
+
+def fields(params: Params) -> OrderedDict[str, Field]:
+  """Fields declared on this node, keyed by name."""
+  return params._field_map
+
+
+def field_paths(params: Params) -> OrderedDict[str, Field]:
+  """Every field in the tree, keyed by dotted path."""
+  return params._field_paths()
+
+
+def keys(params: Params) -> list[str]:
+  return list(params._keys())
+
+
+def values(params: Params) -> list[Any]:
+  return list(params._values())
+
+
+def items(params: Params) -> list[tuple[str, Any]]:
+  return list(params._items())
+
+
+def get(params: Params, path: str, default: Any = None) -> Any:
+  return params._get_path(path, default)
+
+
+def has(params: Params, path: str) -> bool:
+  return params._has(path)
+
+
+def update(params: Params, other: Any = None, **kwargs: Any) -> Params:
+  return params._update(other, **kwargs)
+
+
+def source(params: Params, path: str) -> str:
+  """Which layer last set this value: default, code, cli, env, or a filename."""
+  return params._source_of(path)
+
+
+def sources(params: Params) -> dict[str, str]:
+  """Provenance for every value in the tree, keyed by dotted path."""
+  return params._all_sources()
+
+
+def validate(params: Params, recursive: bool = True) -> Params:
+  return params._validate(recursive)
+
+
+def to_dict(params: Params, *, secrets: bool = False) -> dict[str, Any]:
+  return params._to_dict(secrets=secrets)
+
+
+def flatten(params: Params, prefix: str = '') -> dict[str, Any]:
+  return params._flatten(prefix)
+
+
+def fork(params: Params, **updates: Any) -> Params:
+  return params._fork(**updates)
+
+
+def freeze(params: Params, recursive: bool = True) -> Params:
+  return params._freeze(recursive)
+
+
+def unfreeze(params: Params, recursive: bool = True) -> Params:
+  return params._unfreeze(recursive)
+
+
+def stable_hash(params: Params, length: int = 12) -> str:
+  return params._stable_hash(length)
+
+
+def diff(params: Params, other: Any) -> dict[str, tuple[Any, Any]]:
+  return params._diff(other)
+
+
+def on_change(params: Params, callback: Any) -> Any:
+  return params._on_change(callback)
+
+
+def space(params: Params, *, active_only: bool = True) -> dict[str, Field]:
+  return params._space(active_only=active_only)
+
+
+def sample(params: Params, seed: int | None = None) -> Params:
+  return params._sample(seed)
+
+
+def samples(params: Params, count: int, seed: int | None = None) -> Iterator[Params]:
+  return params._samples(count, seed)
+
+
+def grid(params: Params) -> Iterator[Params]:
+  return params._grid()
+
+
+def define(params: Params, target: Any, *, mapping: Mapping[str, str] | None = None) -> Params:
+  return params._define(target, mapping=mapping)
+
+
+def save(params: Params, path: str | Path) -> None:
+  params._save(path)
+
+
+def load(cls: type[Params], path: str | Path) -> Params:
+  return cls._load(path)
+
+
+def from_command(cls: type[Params], args: str | list[str] | None = None) -> Params:
+  return cls._from_command(args)
+
+
+def from_env(cls: type[Params], prefix: str = '', *, separator: str = '__') -> Params:
+  return cls._from_env(prefix, separator=separator)
+
+
+def layered(cls: type[Params], *entries: Any, separator: str = '__') -> Params:
+  return cls._layered(*entries, separator=separator)

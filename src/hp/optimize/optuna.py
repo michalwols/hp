@@ -20,8 +20,8 @@ def optimize(
     raise ImportError('Install hp[optuna] to use Optuna optimization') from error
 
   def run(trial):
-    candidate = hp.fork()
-    for path, field in hp.space().items():
+    candidate = hp._fork()
+    for path, field in hp._space().items():
       if isinstance(field, Choice):
         value = trial.suggest_categorical(path, list(field.choices))
       elif isinstance(field, Range):

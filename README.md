@@ -15,11 +15,33 @@ class TrainParams(hp.Params):
   seed: int = 42
   optimizer: AdamWParams = AdamWParams()
 
-params = TrainParams.from_command()
-params.freeze()
+params = hp.from_command(TrainParams)
+hp.freeze(params)
 ```
 
 `import hp` is all you need — everything hangs off the module.
+
+## Params has no methods
+
+Operations are module-level functions taking the params first, so that **every
+attribute name stays available for your fields**:
+
+```python
+class TrainParams(hp.Params):
+  sample: int = 4      # would collide with a .sample() method
+  freeze: bool = True
+  update: str = 'ema'
+  values: list = []
+
+hp.to_dict(params)
+hp.fork(params, seed=7)
+hp.space(params)
+hp.from_command(TrainParams)
+```
+
+`hp.Params` intentionally has an empty public namespace. Attribute access
+(`params.lr`), item access (`params['optim.lr']`), `in`, `len()` and iteration
+all still work — they are dunders, so they cost you no names.
 
 ## Nested parameters
 
@@ -31,11 +53,11 @@ params['optimizer.lr'] = 5e-5   # dotted paths create intermediate nodes
 ## Writes are open, reads are strict
 
 Setting a name that was never declared is allowed, and it becomes a real field —
-so it round-trips through `to_dict()` and `save()` like any other:
+so it round-trips through `hp.to_dict()` and `hp.save()` like any other:
 
 ```python
 params.notes = 'sweep A'
-params.save('config.json')   # notes is in there
+hp.save(params, 'config.json')   # notes is in there
 ```
 
 Reading a name that was never set still raises, which is what catches typos:
@@ -54,7 +76,7 @@ TrainParams(sed=1)
 ```
 
 Command line flags behave the same way — an unrecognized flag is kept and warned
-about, never silently dropped. Use `params.update(data, strict=True)` to turn
+about, never silently dropped. Use `hp.update(params, data, strict=True)` to turn
 unknown keys into a `KeyError` instead, and filter or raise on `hp.UnknownParam`
 to tune how loud it is.
 
@@ -108,8 +130,8 @@ variant's own defaults do not.
 ## Command line
 
 ```python
-params = TrainParams.from_command()                      # sys.argv
-params = TrainParams.from_command('--optimizer.lr 1e-4') # or a string / argv list
+params = hp.from_command(TrainParams)                      # sys.argv
+params = hp.from_command(TrainParams, '--optimizer.lr 1e-4') # or a string / argv list
 ```
 
 Dashed flags map onto underscore field paths, so `--weight-decay=0.1` and
@@ -129,7 +151,7 @@ Options:
 ```
 
 `Field(help=...)` supplies the description, `Field(alias='wd')` adds a second spelling
-(also accepted by `update()`, which makes it a migration path for renamed fields), and
+(also accepted by `hp.update()`, which makes it a migration path for renamed fields), and
 `secret=True` fields never print their value.
 
 ## Layering and provenance
@@ -137,14 +159,14 @@ Options:
 Sources compose in order, later ones winning:
 
 ```python
-params = TrainParams.layered('base.yaml', 'experiment.yaml', ('env', 'APP'), 'cli')
+params = hp.layered(TrainParams, 'base.yaml', 'experiment.yaml', ('env', 'APP'), 'cli')
 ```
 
 Every value remembers which layer set it:
 
 ```python
-params.source('optim.lr')   # 'experiment.yaml'
-params.sources()            # {'seed': 'default', 'optim.lr': 'experiment.yaml', ...}
+hp.source(params, 'optim.lr')   # 'experiment.yaml'
+hp.sources(params)          # {'seed': 'default', 'optim.lr': 'experiment.yaml', ...}
 ```
 
 Environment variables map `APP__OPTIM__LR` onto `optim.lr`. Only declared fields are
@@ -164,49 +186,43 @@ class RLParams(hp.Params):
 ```
 
 The callable receives the root params, so conditions can reference anything in the
-tree. `space()` hides inactive fields, `sample()` settles them back to their defaults
-once the fields they depend on are drawn, and `grid()` drops the duplicate
+tree. `hp.space()` hides inactive fields, `hp.sample()` settles them back to their defaults
+once the fields they depend on are drawn, and `hp.grid()` drops the duplicate
 configurations that conditions collapse together.
 
-## Bind, watch, and wrap
+## Parametrized callables
+
+`parametrize` turns a signature into params and supplies them at call time.
+Arguments you pass explicitly win, and are written back:
 
 ```python
-params = TrainParams()
-
-@params.bind
-def train(seed=8):
-  return seed
-
-train()  # 42; explicit calls do not mutate params
-```
-
-```python
-@params.watch
-def train(seed=8):
-  return seed
-
-train(seed=64)
-assert params.seed == 64
-```
-
-```python
-@params.wrap
-def train(seed=8):
-  return seed
-
-train()          # reads 64 from params
-train(seed=128)  # updates params and calls with 128
-```
-
-Function-first usage, where the schema comes from the signature:
-
-```python
-@hp.wrap
+@hp.parametrize
 def train(epochs: int = 10, lr: float = 2e-4):
   ...
 
-train.hp.lr = 1e-4
-train()
+hp.params(train).lr = 1e-4
+train()            # uses lr=1e-4
+train(lr=1e-3)     # explicit wins, and params.lr becomes 1e-3
+```
+
+`track` only observes — it records the target's name, a reference to it, and the
+arguments of every call, without injecting anything or mutating params:
+
+```python
+@hp.track
+def evaluate(threshold: float = 0.5):
+  ...
+
+evaluate(threshold=0.7)
+hp.calls(evaluate)   # [{'threshold': 0.7}]
+```
+
+Both register under a name, so the whole program's configuration surface is
+reachable from one place:
+
+```python
+hp.registry()        # {'train': Entry(...), 'evaluate': Entry(...)}
+hp.params('train')   # by name as well as by reference
 ```
 
 ## Callable schemas
@@ -235,7 +251,7 @@ class SearchParams(hp.Params):
   batch_size: int = hp.Choice((2, 4, 8), default=4)
 
 params = SearchParams()
-for candidate in params.samples(20, seed=1):
+for candidate in hp.samples(params, 20, seed=1):
   train(candidate)
 ```
 
@@ -244,11 +260,9 @@ Optional Optuna integration is available in `hp.optimize.optuna`.
 ## Run tooling
 
 ```python
-params.stable_hash()        # content-addressed id for a config
-params.diff(other)          # {path: (mine, theirs)} for changed values
-params.fork(seed=7)         # copy with updates
-params.on_change(callback)  # (params, name, old, new) on every set
-params.save('config.yaml')  # json / yaml
+hp.stable_hash(params)        # content-addressed id for a config
+hp.diff(params, other)        # {path: (mine, theirs)} for changed values
+hp.fork(params, seed=7)       # copy with updates
+hp.on_change(params, fn)      # (params, name, old, new) on every set
+hp.save(params, 'config.yaml')  # json / yaml
 ```
-
-`hp.Params` is the canonical base class; `hp.HP` and `hp.HyperParams` remain as aliases.

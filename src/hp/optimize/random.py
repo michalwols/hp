@@ -34,7 +34,7 @@ def random_search(
   direction: str = 'maximize',
 ) -> Study:
   results: list[Trial] = []
-  for number, candidate in enumerate(hp.samples(trials, seed=seed)):
+  for number, candidate in enumerate(hp._samples(trials, seed=seed)):
     trial = Trial(number, candidate)
     try:
       trial.value = objective(candidate)

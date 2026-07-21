@@ -44,7 +44,7 @@ def help_text(hp, program: str | None = None) -> str:
   lines = [f'Usage: {program} [OPTIONS]', '', 'Options:']
 
   rows: list[tuple[str, str]] = []
-  for path, field in hp.field_paths().items():
+  for path, field in hp._field_paths().items():
     flag = '--' + path.replace('_', '-')
     if field.type is bool or isinstance(getattr(field, 'default', None), bool):
       flag = f'{flag} / --no-{path.replace("_", "-")}'
@@ -81,7 +81,7 @@ def parse(hp, args: list[str] | None = None):
 
   aliases = {
     field.alias: path
-    for path, field in hp.field_paths().items()
+    for path, field in hp._field_paths().items()
     if field.alias
   }
 
@@ -97,7 +97,7 @@ def parse(hp, args: list[str] | None = None):
     token = token[2:]
     if '=' in token:
       path, raw = token.split('=', 1)
-    elif token.startswith('no-') and (hp.has(_norm(token[3:])) or _norm(token[3:]) in aliases):
+    elif token.startswith('no-') and (hp._has(_norm(token[3:])) or _norm(token[3:]) in aliases):
       path, raw = token[3:], 'false'
     elif index + 1 < len(args) and not args[index + 1].startswith('--'):
       path, raw = token, args[index + 1]
@@ -110,11 +110,11 @@ def parse(hp, args: list[str] | None = None):
 
   # applied as one nested update so tagged unions resolve once, and the
   # result does not depend on the order flags happened to appear in
-  hp.update(_nest(updates), source='cli')
+  hp._update(_nest(updates), source='cli')
 
   # warn only after applying: a flag can be valid for the variant it selects
   for path in updates:
-    if hp.has(path):
+    if hp._has(path):
       continue
     owner = hp
     if '.' in path:

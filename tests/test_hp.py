@@ -24,14 +24,14 @@ def test_dotted_update_and_flatten():
   p = TrainParams()
   p['optim.lr'] = 1e-4
   assert p.optim.lr == 1e-4
-  assert p.flatten()['optim.lr'] == 1e-4
+  assert hp.flatten(p)['optim.lr'] == 1e-4
 
 
 def test_dynamic_autovivification():
   p = hp.Dynamic()
   p.opt.foo = 5
   p.model.encoder.layers = 12
-  assert p.to_dict() == {
+  assert hp.to_dict(p) == {
     'opt': {'foo': 5},
     'model': {'encoder': {'layers': 12}},
   }
@@ -41,7 +41,7 @@ def test_dynamic_accepts_initial_values():
   p = hp.Dynamic(seed=1)
   p.extra = 'x'
   assert p.seed == 1
-  assert p.to_dict() == {'seed': 1, 'extra': 'x'}
+  assert hp.to_dict(p) == {'seed': 1, 'extra': 'x'}
 
 
 def test_declared_class_can_opt_into_dynamic():
@@ -51,15 +51,15 @@ def test_declared_class_can_opt_into_dynamic():
   p = OpenParams()
   p.rollout.temperature = 0.8
   assert p.seed == 42
-  assert p.to_dict() == {'seed': 42, 'rollout': {'temperature': 0.8}}
+  assert hp.to_dict(p) == {'seed': 42, 'rollout': {'temperature': 0.8}}
 
 
 def test_unknown_write_becomes_a_real_field():
   p = TrainParams()
   p.extra = 5
   assert p.extra == 5
-  assert p.to_dict()['extra'] == 5
-  assert 'extra' in p.fields
+  assert hp.to_dict(p)['extra'] == 5
+  assert 'extra' in hp.fields(p)
 
 
 def test_unknown_read_still_raises():
@@ -87,44 +87,60 @@ def test_dynamic_does_not_warn():
     warnings.simplefilter('error')
     p = hp.Dynamic(anything=1)
     p.other = 2
-  assert p.to_dict() == {'anything': 1, 'other': 2}
+  assert hp.to_dict(p) == {'anything': 1, 'other': 2}
 
 
 def test_update_can_still_be_strict():
   p = TrainParams()
   try:
-    p.update({'nope': 1}, strict=True)
+    hp.update(p, {'nope': 1}, strict=True)
   except KeyError:
     pass
   else:
     raise AssertionError('strict=True should still reject unknown keys')
 
 
-def test_bind_watch_wrap():
-  p = TrainParams()
+def test_parametrize_fills_and_records_arguments():
+  hp.clear()
 
-  @p.bind(mapping={'lr': 'optim.lr'})
-  def bound(lr=1.0):
-    return lr
+  @hp.parametrize
+  def train(epochs: int = 10, lr: float = 2e-4):
+    return epochs, lr
 
-  assert bound() == 2e-4
-  assert bound(0.5) == 0.5
-  assert p.optim.lr == 2e-4
+  assert train() == (10, 2e-4)          # filled from params
+  assert train(lr=1e-3) == (10, 1e-3)   # explicit wins
+  assert hp.params(train).lr == 1e-3    # and is written back
+  assert train() == (10, 1e-3)          # so it sticks
 
-  @p.watch(mapping={'lr': 'optim.lr'})
-  def watched(lr=1.0):
-    return lr
 
-  watched(0.3)
-  assert p.optim.lr == 0.3
+def test_track_records_without_changing_behavior():
+  hp.clear()
 
-  @p.wrap(mapping={'lr': 'optim.lr'})
-  def wrapped(lr=1.0):
-    return lr
+  @hp.track
+  def train(epochs: int = 10, lr: float = 2e-4):
+    return epochs, lr
 
-  assert wrapped() == 0.3
-  wrapped(0.2)
-  assert p.optim.lr == 0.2
+  assert train(lr=1e-3) == (10, 1e-3)
+  assert train(5) == (5, 2e-4)          # defaults untouched by params
+
+  assert hp.calls(train) == [{'lr': 1e-3}, {'epochs': 5}]
+  assert hp.params(train).lr == 2e-4    # never mutated
+
+
+def test_registry_collects_targets():
+  hp.clear()
+
+  @hp.parametrize(name='alpha')
+  def alpha(a: int = 1):
+    return a
+
+  @hp.track(name='custom')
+  def beta(b: int = 2):
+    return b
+
+  assert list(hp.registry()) == ['alpha', 'custom']
+  assert hp.entry('custom').target is beta.__wrapped__
+  assert hp.registry()['alpha'].mode == 'parametrize'
 
 
 def test_schema_from_callable():
@@ -137,12 +153,14 @@ def test_schema_from_callable():
   assert p.lr == 1e-4
 
 
-def test_module_wrap():
-  @hp.wrap
+def test_parametrize_exposes_params_on_the_target():
+  hp.clear()
+
+  @hp.parametrize
   def train(epochs: int = 10):
     return epochs
 
-  train.hp.epochs = 5
+  hp.params(train).epochs = 5
   assert train() == 5
 
 
@@ -173,23 +191,23 @@ def test_search_space_sample_and_grid():
     batch: int = hp.Choice((2, 4), default=2)
 
   p = SearchParams()
-  sample = p.sample(seed=1)
+  sample = hp.sample(p, seed=1)
   assert 1e-5 <= sample.lr <= 1e-3
   assert sample.batch in {2, 4}
-  grid = list(p.grid())
+  grid = list(hp.grid(p))
   assert len(grid) == 2
 
 
 def test_freeze_and_hash():
-  p = TrainParams().freeze()
-  before = p.stable_hash()
+  p = hp.freeze(TrainParams())
+  before = hp.stable_hash(p)
   try:
     p.seed = 1
   except TypeError:
     pass
   else:
     raise AssertionError('frozen params should reject updates')
-  assert p.stable_hash() == before
+  assert hp.stable_hash(p) == before
 
 
 def test_mapping_contains():
@@ -204,9 +222,18 @@ def test_mapping_contains():
     raise AssertionError('unknown key should raise KeyError')
 
 
-def test_legacy_aliases():
-  assert hp.HP is hp.Params
-  assert hp.HyperParams is hp.Params
+def test_params_namespace_is_empty():
+  # every attribute name stays available for user fields
+  assert [n for n in dir(hp.Params) if not n.startswith('_')] == []
+
+  class P(hp.Params):
+    sample: int = 4
+    freeze: bool = True
+    update: str = 'ema'
+    values: list = []
+
+  p = P()
+  assert hp.to_dict(p) == {'sample': 4, 'freeze': True, 'update': 'ema', 'values': []}
 
 
 def test_schema_is_module_level_only():
